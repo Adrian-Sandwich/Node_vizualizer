@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0a0a0f">
-  <title>Notes Network — Scope</title>
+  <title>Graph Visualizer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -793,7 +793,7 @@
        Setup Screen
        ═══════════════════════════════════════════════ -->
   <div id="setup">
-    <div id="setup-title">TOPOLOGIES OF IDEAS</div>
+    <div id="setup-title">GRAPH VISUALIZER</div>
     <div id="setup-subtitle">SCOPE // v1.0</div>
     <label for="api-key-input" id="api-key-label">GEMINI API KEY</label>
     <input
@@ -817,7 +817,7 @@
     <div id="graph"></div>
 
     <!-- Title: top-left -->
-    <div id="title">TOPOLOGIES OF IDEAS</div>
+    <div id="title">GRAPH VISUALIZER</div>
     <button id="reanalyze-btn" class="hidden">RE-ANALYZE</button>
 
     <!-- Topology Switcher: top-center -->
@@ -2346,14 +2346,18 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
            .linkWidth(Graph.linkWidth())
            .linkDirectionalParticles(0);
 
-      // Focus camera on node (standard approach)
+      // Focus camera: approach from current direction, stop 400 units from node
       const distance = 400;
-      const mag = Math.hypot(node.x, node.y, node.z) || 1;
-      const distRatio = 1 + distance / mag;
+      const cam = Graph.camera();
+      const dx = cam.position.x - node.x;
+      const dy = cam.position.y - node.y;
+      const dz = cam.position.z - node.z;
+      const curDist = Math.hypot(dx, dy, dz) || 1;
+      const s = distance / curDist;
       Graph.cameraPosition(
-        { x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio },
+        { x: node.x + dx * s, y: node.y + dy * s, z: node.z + dz * s },
         node,
-        1200
+        1000
       );
 
       // After animation completes: shift orbit target right so node centers in
