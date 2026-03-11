@@ -1814,10 +1814,11 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       switch (state) {
         case 'hover':
           lbl.style.opacity = '1';
+          lbl.style.color = '#ffffff';
           lbl.classList.add('label-selected');
           break;
         case 'neighbor':
-          lbl.style.opacity = String(Math.min(1, VFX.labelAlpha.val + 0.15));
+          lbl.style.opacity = '0.09';
           break;
         case 'neighbor2':
           lbl.style.opacity = '0.35';
@@ -2245,7 +2246,10 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       if (focus) {
         const s = typeof link.source === 'object' ? link.source : nodeById[link.source];
         const t = typeof link.target === 'object' ? link.target : nodeById[link.target];
-        if (s === focus || t === focus) return `rgba(${rgb},${VFX.linkOpacityHover.val})`;
+        if (s === focus || t === focus) {
+          const alpha = hoverNode ? VFX.linkOpacityHover.val : VFX.linkAlpha.val;
+          return `rgba(${rgb},${alpha})`;
+        }
         return `rgba(${rgb},0.02)`;
       }
       return `rgba(${rgb},${VFX.linkAlpha.val})`;
