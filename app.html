@@ -2951,14 +2951,10 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         ht_prevX = null;
         ht_pointFrames = 0;
         ht_fistFrames  = 0;
-        ht_hoverNode   = null;
         ht_setLabel('ZOOM');
         return;
       }
-      // Transitioning from zoom to single hand — clear stale hover
-      if (ht_twoHandPrevDist !== null && Graph) handleNodeHover(null);
       ht_twoHandPrevDist = null;
-      ht_hoverNode = null;
 
       const lm      = hands[0];
       const gesture = ht_gesture(lm);
