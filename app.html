@@ -746,7 +746,11 @@
       font-weight: 700;
     }
     .node-label.label-dim {
-      opacity: 0.1 !important;
+      opacity: 0.06 !important;
+    }
+    .node-label.label-neighbor2 {
+      font-size: 9px !important;
+      color: #7a7a7a !important;
     }
 
     /* Square-only mode — hide text, show just the bullet */
@@ -1803,19 +1807,41 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
     function updateNodeAppearance(node, state) {
       const lbl = node.__labelDiv;
       if (!lbl) return;
+      // Always reset all state classes and inline overrides first
+      lbl.classList.remove('label-selected', 'label-dim', 'label-neighbor2');
+      lbl.style.fontSize = '';
+      lbl.style.color = '';
       switch (state) {
         case 'hover':
           lbl.style.opacity = '1';
+          lbl.classList.add('label-selected');
           break;
         case 'neighbor':
           lbl.style.opacity = String(Math.min(1, VFX.labelAlpha.val + 0.15));
           break;
+        case 'neighbor2':
+          lbl.style.opacity = '0.35';
+          lbl.classList.add('label-neighbor2');
+          break;
         case 'dim':
           lbl.style.opacity = String(VFX.dimOpacity.val * 0.3);
+          lbl.classList.add('label-dim');
           break;
         default:
           lbl.style.opacity = String(VFX.labelAlpha.val);
       }
+    }
+
+    // Returns {neighbors1: Set<id>, neighbors2: Set<id>} for a focus node
+    function getNeighborDepths(focusNode) {
+      const neighbors1 = neighborSets[focusNode.id] || new Set();
+      const neighbors2 = new Set();
+      neighbors1.forEach(id => {
+        (neighborSets[id] || new Set()).forEach(id2 => {
+          if (id2 !== focusNode.id && !neighbors1.has(id2)) neighbors2.add(id2);
+        });
+      });
+      return { neighbors1, neighbors2 };
     }
 
     // ═══════════════════════════════════════════════
@@ -2266,16 +2292,24 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       hoverNode = node || null;
       document.getElementById('graph').style.cursor = node ? 'pointer' : '';
       if (Graph) {
+        const { neighbors1, neighbors2 } = node
+          ? getNeighborDepths(node)
+          : { neighbors1: new Set(), neighbors2: new Set() };
+
+        const selDepths = selectedNode && !node ? getNeighborDepths(selectedNode) : null;
+
         Graph.graphData().nodes.forEach(n => {
           if (hoverNode) {
-            // Hover: highlight node + neighbors
-            if (n === hoverNode) updateNodeAppearance(n, 'hover');
-            else if (neighborSets[hoverNode.id]?.has(n.id)) updateNodeAppearance(n, 'neighbor');
-            else updateNodeAppearance(n, 'dim');
+            if (n === hoverNode)             updateNodeAppearance(n, 'hover');
+            else if (neighbors1.has(n.id))   updateNodeAppearance(n, 'neighbor');
+            else if (neighbors2.has(n.id))   updateNodeAppearance(n, 'neighbor2');
+            else                             updateNodeAppearance(n, 'dim');
           } else if (selectedNode) {
-            // Selection: only the selected node glows
-            if (n === selectedNode) updateNodeAppearance(n, 'hover');
-            else updateNodeAppearance(n, 'dim');
+            // Restore selection-tier view when hover clears
+            if (n === selectedNode)                          updateNodeAppearance(n, 'hover');
+            else if (selDepths.neighbors1.has(n.id))         updateNodeAppearance(n, 'neighbor');
+            else if (selDepths.neighbors2.has(n.id))         updateNodeAppearance(n, 'neighbor2');
+            else                                             updateNodeAppearance(n, 'dim');
           } else {
             updateNodeAppearance(n, 'normal');
           }
@@ -2289,21 +2323,13 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       selectedNode = node;
       showDetailCard(node);
 
-      // Apply selection highlighting — only selected node glows, rest dim
+      // 3-tier label hierarchy: selected → neighbors → 2-hop → dim
+      const { neighbors1, neighbors2 } = getNeighborDepths(node);
       Graph.graphData().nodes.forEach(n => {
-        if (n === node) {
-          updateNodeAppearance(n, 'hover');
-          if (n.__labelDiv) {
-            n.__labelDiv.classList.remove('label-dim');
-            n.__labelDiv.classList.add('label-selected');
-          }
-        } else {
-          updateNodeAppearance(n, 'dim');
-          if (n.__labelDiv) {
-            n.__labelDiv.classList.remove('label-selected');
-            n.__labelDiv.classList.add('label-dim');
-          }
-        }
+        if (n === node)                    updateNodeAppearance(n, 'hover');
+        else if (neighbors1.has(n.id))     updateNodeAppearance(n, 'neighbor');
+        else if (neighbors2.has(n.id))     updateNodeAppearance(n, 'neighbor2');
+        else                               updateNodeAppearance(n, 'dim');
       });
 
       // Dim unconnected links
@@ -2316,22 +2342,36 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
            .linkWidth(Graph.linkWidth())
            .linkDirectionalParticles(0);
 
-      // Focus camera — offset horizontally to center in the space left of the panel
-      const panelWidth = parseFloat(
-        getComputedStyle(document.documentElement).getPropertyValue('--panel-width') || '360'
-      );
-      const usableWidth = window.innerWidth - panelWidth;
-      const offsetX = (window.innerWidth / 2 - usableWidth / 2) / window.innerWidth;
-
+      // Focus camera on node (standard approach)
       const distance = 400;
       const mag = Math.hypot(node.x, node.y, node.z) || 1;
       const distRatio = 1 + distance / mag;
-      const camX = node.x * distRatio - offsetX * distance;
       Graph.cameraPosition(
-        { x: camX, y: node.y * distRatio, z: node.z * distRatio },
+        { x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio },
         node,
         1200
       );
+
+      // After animation completes: shift orbit target right so node centers in
+      // the space left of the panel using world-space units per pixel
+      const panelWidth = parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue('--panel-width') || '360'
+      );
+      setTimeout(() => {
+        if (!Graph || !selectedNode) return;
+        const camera = Graph.camera();
+        const controls = Graph.controls();
+        const fov = camera.fov * Math.PI / 180;
+        const worldPerPx = 2 * distance * Math.tan(fov / 2) / window.innerHeight;
+        const rightShift = (panelWidth / 2) * worldPerPx;
+        const right = new THREE.Vector3();
+        right.crossVectors(
+          camera.getWorldDirection(new THREE.Vector3()),
+          camera.up
+        ).normalize();
+        controls.target.addScaledVector(right, rightShift);
+        controls.update();
+      }, 1300);
     }
 
     function handleBackgroundClick() {
@@ -2425,12 +2465,8 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       selectedNode = null;
       // Clear selection highlighting
       if (Graph) {
-        Graph.graphData().nodes.forEach(n => {
-          updateNodeAppearance(n, 'normal');
-          if (n.__labelDiv) {
-            n.__labelDiv.classList.remove('label-selected', 'label-dim');
-          }
-        });
+        // updateNodeAppearance('normal') already clears all state classes
+        Graph.graphData().nodes.forEach(n => updateNodeAppearance(n, 'normal'));
         Graph.linkOpacity(1.0);
         Graph.linkColor(Graph.linkColor())
              .linkWidth(Graph.linkWidth())
@@ -2953,15 +2989,20 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         let nearest = ht_nearestNode(fx, fy);
         ht_prevX = null;
 
-        // Auto-select nearest node to screen center if finger isn't close to any node
+        // Auto-select when entering point with no hover: pick the most camera-forward
+        // node within a central screen region (smallest NDC z = closest to viewer)
         if (!nearest && ht_hoverNode === null && Graph) {
           const cx = window.innerWidth / 2;
           const cy = window.innerHeight / 2;
-          let bestD = Infinity, bestN = null;
+          const radius = Math.min(window.innerWidth, window.innerHeight) * 0.4;
+          const camera = Graph.camera();
+          let bestZ = Infinity, bestN = null;
           Graph.graphData().nodes.forEach(n => {
             const sc = Graph.graph2ScreenCoords(n.x, n.y, n.z);
-            const d  = Math.hypot(sc.x - cx, sc.y - cy);
-            if (d < bestD) { bestD = d; bestN = n; }
+            if (Math.hypot(sc.x - cx, sc.y - cy) < radius) {
+              const v = new THREE.Vector3(n.x, n.y, n.z).project(camera);
+              if (v.z < bestZ) { bestZ = v.z; bestN = n; }
+            }
           });
           if (bestN) {
             ht_hoverNode = bestN;
