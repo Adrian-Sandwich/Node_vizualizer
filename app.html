@@ -2851,8 +2851,10 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
     let ht_twoHandPrevDist = null;
     let ht_hoverNode = null;
     let ht_pointFrames = 0;
+    let ht_fistFrames  = 0;
     let ht_noHandFrames = 0;
     const HT_CLICK_FRAMES   = 45;   // hold 0.75s to select
+    const HT_FIST_FRAMES    = 30;   // hold 1s to reset
     const HT_RELEASE_FRAMES = 120;  // 2s without hand → re-enable mouse
 
     function ht_updateCamera() {
@@ -2924,6 +2926,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         ht_prevX = null; ht_prevY = null;
         ht_twoHandPrevDist = null;
         ht_pointFrames = 0;
+        ht_fistFrames  = 0;
         ht_noHandFrames++;
         if (ht_noHandFrames > HT_RELEASE_FRAMES && Graph) {
           Graph.controls().enabled = true;
@@ -2947,10 +2950,15 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         ht_twoHandPrevDist = dist;
         ht_prevX = null;
         ht_pointFrames = 0;
+        ht_fistFrames  = 0;
+        ht_hoverNode   = null;
         ht_setLabel('ZOOM');
         return;
       }
+      // Transitioning from zoom to single hand — clear stale hover
+      if (ht_twoHandPrevDist !== null && Graph) handleNodeHover(null);
       ht_twoHandPrevDist = null;
+      ht_hoverNode = null;
 
       const lm      = hands[0];
       const gesture = ht_gesture(lm);
@@ -2958,17 +2966,25 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       const px = 1 - lm[9].x;
       const py = lm[9].y;
 
-      // ── Fist → reset ───────────────────────────────────────────────────────
+      // ── Fist → hold 1s to reset ────────────────────────────────────────────
       if (gesture === 'fist') {
         ht_prevX = null;
         ht_pointFrames = 0;
-        ht_camR = SCALE * 2.5; ht_camPhi = 0; ht_camTheta = Math.PI / 2;
-        ht_updateCamera();
-        if (Graph) { handleNodeHover(null); }
-        if (typeof hideDetailCard === 'function') hideDetailCard();
-        ht_setLabel('RESET');
+        ht_fistFrames++;
+        const pct = Math.min(1, ht_fistFrames / HT_FIST_FRAMES);
+        ht_setLabel(`RESET [${Math.round(pct * 100)}%]`);
+        if (ht_fistFrames >= HT_FIST_FRAMES) {
+          ht_fistFrames = 0;
+          ht_hoverNode  = null;
+          ht_camR = SCALE * 2.5; ht_camPhi = 0; ht_camTheta = Math.PI / 2;
+          ht_updateCamera();
+          if (Graph) handleNodeHover(null);
+          if (typeof hideDetailCard === 'function') hideDetailCard();
+          ht_setLabel('RESET');
+        }
         return;
       }
+      ht_fistFrames = 0;
 
       // ── Palm → orbit camera ────────────────────────────────────────────────
       if (gesture === 'palm') {
