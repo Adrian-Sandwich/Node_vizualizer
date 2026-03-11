@@ -2853,8 +2853,11 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
     let ht_pointFrames = 0;
     let ht_fistFrames  = 0;
     let ht_noHandFrames = 0;
+    let ht_candidateNode   = null;  // node being considered for hover change
+    let ht_candidateFrames = 0;     // consecutive frames with that candidate
     const HT_CLICK_FRAMES   = 45;   // hold 0.75s to select
     const HT_FIST_FRAMES    = 30;   // hold 1s to reset
+    const HT_HOVER_FRAMES   = 4;    // consecutive frames needed to commit hover change
     const HT_RELEASE_FRAMES = 120;  // 2s without hand → re-enable mouse
 
     function ht_updateCamera() {
@@ -2925,8 +2928,10 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       if (hands.length === 0) {
         ht_prevX = null; ht_prevY = null;
         ht_twoHandPrevDist = null;
-        ht_pointFrames = 0;
-        ht_fistFrames  = 0;
+        ht_pointFrames     = 0;
+        ht_fistFrames      = 0;
+        ht_candidateNode   = null;
+        ht_candidateFrames = 0;
         ht_noHandFrames++;
         if (ht_noHandFrames > HT_RELEASE_FRAMES && Graph) {
           Graph.controls().enabled = true;
@@ -2948,9 +2953,11 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
           ht_updateCamera();
         }
         ht_twoHandPrevDist = dist;
-        ht_prevX = null;
-        ht_pointFrames = 0;
-        ht_fistFrames  = 0;
+        ht_prevX           = null;
+        ht_pointFrames     = 0;
+        ht_fistFrames      = 0;
+        ht_candidateNode   = null;
+        ht_candidateFrames = 0;
         ht_setLabel('ZOOM');
         return;
       }
@@ -2992,8 +2999,11 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
           ht_camTheta  = Math.max(0.1, Math.min(Math.PI - 0.1, ht_camTheta));
           ht_updateCamera();
         }
-        ht_prevX = px; ht_prevY = py;
-        ht_pointFrames = 0;
+        ht_prevX           = px;
+        ht_prevY           = py;
+        ht_pointFrames     = 0;
+        ht_candidateNode   = null;
+        ht_candidateFrames = 0;
         ht_setLabel('ROTATE');
         return;
       }
@@ -3023,22 +3033,38 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
           if (bestN) nearest = bestN; // feed into normal hover flow below
         }
 
-        if (nearest !== ht_hoverNode) {
-          ht_hoverNode   = nearest;
-          ht_pointFrames = 0;
-          if (Graph) handleNodeHover(nearest);
-        } else if (nearest) {
-          ht_pointFrames++;
-          const pct = Math.min(1, ht_pointFrames / HT_CLICK_FRAMES);
-          if (ht_pointFrames >= HT_CLICK_FRAMES) {
-            if (Graph) handleNodeClick(nearest);
-            ht_pointFrames = 0;
+        if (nearest === ht_hoverNode) {
+          // Same node — clear candidate streak and accumulate for click
+          ht_candidateNode   = null;
+          ht_candidateFrames = 0;
+          if (nearest) {
+            ht_pointFrames++;
+            const pct = Math.min(1, ht_pointFrames / HT_CLICK_FRAMES);
+            if (ht_pointFrames >= HT_CLICK_FRAMES) {
+              if (Graph) handleNodeClick(nearest);
+              ht_pointFrames = 0;
+            }
+            ht_setLabel(`→ ${nearest.name.slice(0, 18)} [${Math.round(pct * 100)}%]`);
+            return;
           }
-          ht_setLabel(`→ ${nearest.name.slice(0, 18)} [${Math.round(pct * 100)}%]`);
-          return;
+        } else {
+          // Different node — require HT_HOVER_FRAMES consecutive frames before committing
+          if (nearest === ht_candidateNode) {
+            ht_candidateFrames++;
+          } else {
+            ht_candidateNode   = nearest;
+            ht_candidateFrames = 1;
+          }
+          if (ht_candidateFrames >= HT_HOVER_FRAMES) {
+            ht_hoverNode       = nearest;
+            ht_pointFrames     = 0;
+            ht_candidateNode   = null;
+            ht_candidateFrames = 0;
+            if (Graph) handleNodeHover(nearest);
+          }
         }
 
-        ht_setLabel(nearest ? `→ ${nearest.name.slice(0, 20)}` : 'POINT');
+        ht_setLabel(ht_hoverNode ? `→ ${ht_hoverNode.name.slice(0, 20)}` : 'POINT');
         return;
       }
 
