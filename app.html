@@ -3020,10 +3020,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
               if (v.z < bestZ) { bestZ = v.z; bestN = n; }
             }
           });
-          if (bestN) {
-            ht_hoverNode = bestN;
-            handleNodeHover(bestN);
-          }
+          if (bestN) nearest = bestN; // feed into normal hover flow below
         }
 
         if (nearest !== ht_hoverNode) {
