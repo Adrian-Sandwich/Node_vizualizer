@@ -1203,32 +1203,125 @@
       const parser = new DOMParser();
       const doc = parser.parseFromString(htmlText, 'text/html');
       const scripts = doc.querySelectorAll('script');
+
+      // Detect format: "var nodesArr" (matria) vs "new vis.DataSet" (nebula/vis.js)
       let dataScript = null;
+      let format = null;
       for (const s of scripts) {
-        if (s.textContent.includes('var nodesArr')) {
-          dataScript = s.textContent;
-          break;
-        }
+        const txt = s.textContent;
+        if (txt.includes('var nodesArr')) { dataScript = txt; format = 'matria'; break; }
+        if (txt.includes('new vis.DataSet(')) { dataScript = txt; format = 'visjs'; break; }
       }
       if (!dataScript) throw new Error('No graph data found in file');
 
+      if (format === 'matria') return parseMatriaFormat(dataScript);
+      if (format === 'visjs') return parseVisJsFormat(dataScript);
+      throw new Error('Unrecognized graph format');
+    }
+
+    function parseMatriaFormat(script) {
       const varNames = [
         'nodesArr', 'edgesArr', 'DOMAIN_COLORS', 'DOMAIN_LABELS',
         'DOMAIN_MAP', 'TAG_SCHEMA', 'TAG_COUNTS', 'EDGE_TYPE_COUNTS'
       ];
       const lines = [];
-      for (const line of dataScript.split('\n')) {
+      for (const line of script.split('\n')) {
         const trimmed = line.trim();
         if (varNames.some(v => trimmed.startsWith('var ' + v + ' =') || trimmed.startsWith('var ' + v + '='))) {
           lines.push(trimmed);
         }
       }
       if (lines.length < 2) throw new Error('Could not extract graph variables');
-
       const code = lines.join('\n')
-        + '\nreturn {' + varNames.map(v => v).join(',') + '};';
-      const fn = new Function(code);
-      return fn();
+        + '\nreturn {' + varNames.join(',') + '};';
+      return new Function(code)();
+    }
+
+    function parseVisJsFormat(script) {
+      // Extract the JSON arrays from: nodes = new vis.DataSet([...])
+      // and: edges = new vis.DataSet([...])
+      const extractArray = (varName) => {
+        const re = new RegExp(varName + '\\s*=\\s*new\\s+vis\\.DataSet\\(');
+        const match = re.exec(script);
+        if (!match) return [];
+        let start = match.index + match[0].length;
+        // Find the matching closing paren by bracket counting
+        let depth = 1; let i = start;
+        while (i < script.length && depth > 0) {
+          if (script[i] === '(' || script[i] === '[') depth++;
+          else if (script[i] === ')' || script[i] === ']') depth--;
+          i++;
+        }
+        // i now points after the closing ), the array is between start and i-1
+        const jsonStr = script.substring(start, i - 1);
+        return JSON.parse(jsonStr);
+      };
+
+      const rawNodes = extractArray('nodes');
+      const rawEdges = extractArray('edges');
+      if (!rawNodes.length) throw new Error('No nodes found in vis.js DataSet');
+
+      // Build domain colors from unique groups
+      const groupSet = new Set(rawNodes.map(n => n.group || 'Unknown'));
+      // Default palette for auto-assignment
+      const palette = [
+        '#42A5F5','#66BB6A','#FFA726','#EF5350','#AB47BC',
+        '#26C6DA','#9CCC65','#78909C','#EC407A','#8D6E63',
+        '#FF7043','#7C4DFF','#FFD54F','#4DB6AC','#F06292',
+        '#AED581','#4FC3F7','#BA68C8','#FFB74D','#A1887F'
+      ];
+      const DOMAIN_COLORS = {};
+      const DOMAIN_LABELS = {};
+      let ci = 0;
+      groupSet.forEach(g => {
+        DOMAIN_COLORS[g] = palette[ci % palette.length];
+        DOMAIN_LABELS[g] = g;
+        ci++;
+      });
+
+      // Build edge type counts and colors from edges
+      const EDGE_TYPE_COUNTS = {};
+      const edgeTypeColors = {};
+      rawEdges.forEach(e => {
+        const et = e.title || 'UNKNOWN';
+        EDGE_TYPE_COUNTS[et] = (EDGE_TYPE_COUNTS[et] || 0) + 1;
+        if (!edgeTypeColors[et] && e.color) {
+          edgeTypeColors[et] = typeof e.color === 'string' ? e.color : e.color.color || '#999';
+        }
+      });
+
+      // Build TAG_COUNTS from nodes
+      const TAG_COUNTS = {};
+      rawNodes.forEach(n => {
+        const tag = n.group || 'Unknown';
+        TAG_COUNTS[tag] = (TAG_COUNTS[tag] || 0) + 1;
+      });
+
+      // Convert to matria-compatible format
+      const nodesArr = rawNodes.map(n => ({
+        id: n.id,
+        label: n.label || n.id,
+        _tag: n.group || 'Unknown',
+        _domain: n.group || 'Unknown',
+        _vid: n.id,
+        // Preserve title HTML for detail card metadata
+        _tooltip: n.title || '',
+        size: n.size || 10,
+      }));
+
+      const edgesArr = rawEdges.map(e => ({
+        from: e.from,
+        to: e.to,
+        _edgeType: e.title || 'UNKNOWN',
+        color: typeof e.color === 'string' ? { color: e.color } : e.color,
+      }));
+
+      return {
+        nodesArr, edgesArr, DOMAIN_COLORS, DOMAIN_LABELS,
+        TAG_COUNTS, EDGE_TYPE_COUNTS,
+        TAG_SCHEMA: null, DOMAIN_MAP: null,
+        _edgeTypeColors: edgeTypeColors,
+      };
     }
 
     function mapExternalToInternal(parsed) {
@@ -1251,6 +1344,7 @@
         _tag: n._tag || '',
         _domain: n._domain || 'default',
         _vid: n._vid || n.id,
+        _tooltip: n._tooltip || '',
         cluster_id: domainToClusterId[n._domain] ?? domainToClusterId['default'] ?? 0,
         cluster_name: (DOMAIN_LABELS && DOMAIN_LABELS[n._domain]) || n._domain || '',
         text_preview: '',
@@ -2737,7 +2831,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         document.getElementById('card-cluster').innerHTML =
           `<span class="cluster-badge" style="border-color:${color};color:${color};">${escapeHtml(node.cluster_name)}</span>`;
 
-        // Meta: tag, domain, schema info
+        // Meta: tag, domain, schema info or vis.js tooltip properties
         let metaHtml = `<div class="info-row"><span class="info-key">TYPE</span><span class="info-val">${escapeHtml(node._tag || '')}</span></div>`;
         metaHtml += `<div class="info-row"><span class="info-key">DOMAIN</span><span class="info-val">${escapeHtml(node._domain || '')}</span></div>`;
         const schema = externalGraphMeta?.TAG_SCHEMA?.[node._tag];
@@ -2751,8 +2845,21 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         }
         document.getElementById('card-meta').innerHTML = metaHtml;
 
-        // No text preview for external graphs
-        document.getElementById('card-preview').textContent = '';
+        // Show vis.js tooltip properties as preview if available
+        if (node._tooltip) {
+          // Parse HTML-encoded tooltip: "<b>Type</b><br>Key: Value<br>..."
+          const tmp = document.createElement('div');
+          tmp.innerHTML = node._tooltip;
+          const text = tmp.textContent || '';
+          // Skip first two lines (type + ID) since we already show them
+          const propLines = text.split('\n').filter(l => l.includes(':')).slice(2);
+          document.getElementById('card-preview').innerHTML =
+            '<div style="font-size:11px;line-height:1.6;opacity:0.8">'
+            + propLines.map(l => escapeHtml(l.trim())).join('<br>')
+            + '</div>';
+        } else {
+          document.getElementById('card-preview').textContent = '';
+        }
 
         // Connections with edge type
         const edges = adjacency[node.id] || [];
