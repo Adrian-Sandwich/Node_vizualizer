@@ -215,6 +215,35 @@
       color: var(--text-bright);
     }
 
+    #setup-divider {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      color: var(--text-dim);
+      margin: 8px 0;
+      opacity: 0.5;
+    }
+
+    #load-graph-btn {
+      background: transparent;
+      border: 1px solid var(--cyan);
+      border-radius: 0;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 12px;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      padding: 10px 24px;
+      width: 320px;
+      box-sizing: border-box;
+      cursor: pointer;
+      transition: border-color 200ms ease, color 200ms ease;
+    }
+    #load-graph-btn:hover {
+      border-color: var(--text-bright);
+      color: var(--text-bright);
+    }
+
     #load-cache-btn {
       background: transparent;
       border: 1px solid var(--blue);
@@ -884,6 +913,9 @@
       autocomplete="off"
     >
     <button id="pick-folder-btn">SELECT NOTES FOLDER</button>
+    <div id="setup-divider">OR</div>
+    <button id="load-graph-btn">LOAD EXTERNAL GRAPH</button>
+    <input type="file" id="graph-file-input" accept=".html" style="display:none">
     <button id="load-cache-btn" class="hidden">RESUME PREVIOUS SESSION</button>
     <div id="setup-status"></div>
   </div>
@@ -1162,6 +1194,132 @@
       } catch (err) {
         if (err.name === 'AbortError') return; // user cancelled picker
         setupStatus.textContent = 'ERROR: ' + err.message.toUpperCase();
+      }
+    });
+
+    // ── External graph import ───────────────────────────────────────────
+
+    function parseExternalGraph(htmlText) {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(htmlText, 'text/html');
+      const scripts = doc.querySelectorAll('script');
+      let dataScript = null;
+      for (const s of scripts) {
+        if (s.textContent.includes('var nodesArr')) {
+          dataScript = s.textContent;
+          break;
+        }
+      }
+      if (!dataScript) throw new Error('No graph data found in file');
+
+      const varNames = [
+        'nodesArr', 'edgesArr', 'DOMAIN_COLORS', 'DOMAIN_LABELS',
+        'DOMAIN_MAP', 'TAG_SCHEMA', 'TAG_COUNTS', 'EDGE_TYPE_COUNTS'
+      ];
+      const lines = [];
+      for (const line of dataScript.split('\n')) {
+        const trimmed = line.trim();
+        if (varNames.some(v => trimmed.startsWith('var ' + v + ' =') || trimmed.startsWith('var ' + v + '='))) {
+          lines.push(trimmed);
+        }
+      }
+      if (lines.length < 2) throw new Error('Could not extract graph variables');
+
+      const code = lines.join('\n')
+        + '\nreturn {' + varNames.map(v => v).join(',') + '};';
+      const fn = new Function(code);
+      return fn();
+    }
+
+    function mapExternalToInternal(parsed) {
+      const { nodesArr, edgesArr, DOMAIN_COLORS, DOMAIN_LABELS, DOMAIN_MAP,
+              TAG_SCHEMA, TAG_COUNTS, EDGE_TYPE_COUNTS } = parsed;
+
+      const domainList = Object.keys(DOMAIN_COLORS || {});
+      const domainToClusterId = {};
+      domainList.forEach((d, i) => { domainToClusterId[d] = i; });
+
+      const clusterColors = domainList.map(d => DOMAIN_COLORS[d]);
+      const clusterNames = {};
+      domainList.forEach((d, i) => {
+        clusterNames[i] = (DOMAIN_LABELS && DOMAIN_LABELS[d]) || d;
+      });
+
+      const nodes = nodesArr.map(n => ({
+        id: n.id,
+        name: n.label || n.id,
+        _tag: n._tag || '',
+        _domain: n._domain || 'default',
+        _vid: n._vid || n.id,
+        cluster_id: domainToClusterId[n._domain] ?? domainToClusterId['default'] ?? 0,
+        cluster_name: (DOMAIN_LABELS && DOMAIN_LABELS[n._domain]) || n._domain || '',
+        text_preview: '',
+        filename: '',
+        is_medoid: 0,
+        is_llm_center: 0,
+      }));
+
+      const edges = edgesArr.map(e => ({
+        source: e.from,
+        target: e.to,
+        label_forward: e._edgeType || '',
+        label_backward: e._edgeType || '',
+        topology: 'graph',
+      }));
+
+      return {
+        nodes, edges, clusterColors, clusterNames,
+        meta: { TAG_SCHEMA, TAG_COUNTS, EDGE_TYPE_COUNTS, DOMAIN_MAP }
+      };
+    }
+
+    async function loadExternalGraph(file) {
+      setupStatus.textContent = 'READING GRAPH FILE...';
+      const text = await file.text();
+
+      setupStatus.textContent = 'PARSING GRAPH DATA...';
+      const parsed = parseExternalGraph(text);
+
+      const mapped = mapExternalToInternal(parsed);
+      setupStatus.textContent = `FOUND ${mapped.nodes.length} NODES, ${mapped.edges.length} EDGES`;
+
+      isExternalGraph = true;
+      externalGraphMeta = mapped.meta;
+      CLUSTER_COLORS = mapped.clusterColors;
+      allNodes = mapped.nodes;
+      edgeSets = { graph: mapped.edges };
+      currentLayout = 'graph';
+
+      document.getElementById('setup').classList.add('hidden');
+      document.getElementById('main').classList.remove('hidden');
+      document.getElementById('reanalyze-btn').classList.add('hidden');
+      document.getElementById('controls').style.display = 'none';
+      const knnRow = document.getElementById('readout-knn');
+      if (knnRow && knnRow.parentElement) knnRow.parentElement.style.display = 'none';
+
+      setBootStage('LOADING GRAPH...', `${mapped.nodes.length} NODES`);
+
+      initGraph(mapped.nodes, mapped.edges);
+      buildLegend(mapped.clusterNames);
+      buildClusterLabels(mapped.clusterNames);
+      buildReadouts(mapped.nodes.length, mapped.edges.length);
+
+      setBootStage(`GRAPH ONLINE // ${mapped.nodes.length} NODES // ${mapped.edges.length} EDGES`, '');
+      setTimeout(hideBootStatus, 2000);
+    }
+
+    document.getElementById('load-graph-btn').addEventListener('click', () => {
+      document.getElementById('graph-file-input').click();
+    });
+
+    document.getElementById('graph-file-input').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      try {
+        await loadExternalGraph(file);
+      } catch (err) {
+        setupStatus.textContent = 'ERROR: ' + err.message.toUpperCase();
+        console.error(err);
       }
     });
 
@@ -2299,6 +2457,8 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
     let nodeById = {};
     let allNodes = [];
     let edgeSets = { central: [], decentral: [], distrib: [] };
+    let isExternalGraph = false;
+    let externalGraphMeta = null;
 
     // ── Lookup builders ──
 
@@ -2407,6 +2567,12 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
     // ── Tooltip builders ──
 
     function buildNodeTooltip(node) {
+      if (isExternalGraph) {
+        return `<div style="text-align:center;font-family:monospace;">`
+          + `<div style="font-weight:600;">${escapeHtml(node.name)}</div>`
+          + `<div style="color:#888888;font-size:11px;">${escapeHtml(node._tag || '')} / ${escapeHtml(node.cluster_name || '')}</div>`
+          + '</div>';
+      }
       const markers = [];
       if (node.is_medoid) markers.push('<span style="color:#222222;font-size:10px;">MEDOID</span>');
       if (node.is_llm_center) markers.push('<span style="color:#666666;font-size:10px;">LLM.CENTER</span>');
@@ -2561,35 +2727,68 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       const card = document.getElementById('detail-card');
       const resize = document.getElementById('panel-resize');
 
-      // Title
-      let title = escapeHtml(node.name);
-      if (node.is_medoid) title += ' <span class="marker medoid">MEDOID</span>';
-      if (node.is_llm_center) title += ' <span class="marker llm-center">LLM.CENTER</span>';
-      document.getElementById('card-title').innerHTML = title;
+      if (isExternalGraph) {
+        // Title: tag::label
+        document.getElementById('card-title').innerHTML =
+          `<span style="opacity:0.5">${escapeHtml(node._tag || '')}::</span>${escapeHtml(node.name)}`;
 
-      // Cluster
-      const color = CLUSTER_COLORS[node.cluster_id % CLUSTER_COLORS.length];
-      document.getElementById('card-cluster').innerHTML =
-        `<span class="cluster-badge" style="border-color:${color};color:${color};">${escapeHtml(node.cluster_name)}</span>`;
+        // Cluster badge: domain
+        const color = CLUSTER_COLORS[node.cluster_id % CLUSTER_COLORS.length];
+        document.getElementById('card-cluster').innerHTML =
+          `<span class="cluster-badge" style="border-color:${color};color:${color};">${escapeHtml(node.cluster_name)}</span>`;
 
-      // Parse frontmatter and body
-      const { meta, body } = parseFrontmatter(node.text_preview || '');
+        // Meta: tag, domain, schema info
+        let metaHtml = `<div class="info-row"><span class="info-key">TYPE</span><span class="info-val">${escapeHtml(node._tag || '')}</span></div>`;
+        metaHtml += `<div class="info-row"><span class="info-key">DOMAIN</span><span class="info-val">${escapeHtml(node._domain || '')}</span></div>`;
+        const schema = externalGraphMeta?.TAG_SCHEMA?.[node._tag];
+        if (schema) {
+          if (schema.table) metaHtml += `<div class="info-row"><span class="info-key">TABLE</span><span class="info-val">${escapeHtml(schema.table)}</span></div>`;
+          if (schema.rows != null) metaHtml += `<div class="info-row"><span class="info-key">ROWS</span><span class="info-val">${schema.rows.toLocaleString()}</span></div>`;
+          if (schema.attrs) {
+            const attrNames = schema.attrs.map(a => a.name).join(', ');
+            metaHtml += `<div class="info-row"><span class="info-key">ATTRS</span><span class="info-val" style="font-size:10px;word-break:break-all">${escapeHtml(attrNames)}</span></div>`;
+          }
+        }
+        document.getElementById('card-meta').innerHTML = metaHtml;
 
-      // Metadata
-      document.getElementById('card-meta').innerHTML = renderMeta(meta);
+        // No text preview for external graphs
+        document.getElementById('card-preview').textContent = '';
 
-      // Body preview
-      document.getElementById('card-preview').textContent = body || '(no content)';
+        // Connections with edge type
+        const edges = adjacency[node.id] || [];
+        let html = `<div class="conn-header">CONNECTIONS (${edges.length})</div>`;
+        edges.forEach(e => {
+          const target = nodeById[e.id];
+          if (!target) return;
+          const targetLabel = (target._tag || '') + '::' + (target.name || '');
+          html += `<div class="conn-item"><div class="conn-edge"><span class="arrow">── </span><span class="label">${escapeHtml(e.label)}</span><span class="arrow"> ──▸</span></div><div class="conn-name" data-node-id="${target.id}">${escapeHtml(targetLabel)}</div></div>`;
+        });
+        document.getElementById('card-connections').innerHTML = html;
 
-      // Connections
-      const edges = adjacency[node.id] || [];
-      let html = `<div class="conn-header">CONNECTIONS (${edges.length})</div>`;
-      edges.forEach(e => {
-        const target = nodeById[e.id];
-        if (!target) return;
-        html += `<div class="conn-item"><div class="conn-edge"><span class="arrow">── </span><span class="label">${escapeHtml(e.label)}</span><span class="arrow"> ──▸</span></div><div class="conn-name" data-node-id="${target.id}">${escapeHtml(target.name)}</div></div>`;
-      });
-      document.getElementById('card-connections').innerHTML = html;
+      } else {
+        // Notes pipeline detail card
+        let title = escapeHtml(node.name);
+        if (node.is_medoid) title += ' <span class="marker medoid">MEDOID</span>';
+        if (node.is_llm_center) title += ' <span class="marker llm-center">LLM.CENTER</span>';
+        document.getElementById('card-title').innerHTML = title;
+
+        const color = CLUSTER_COLORS[node.cluster_id % CLUSTER_COLORS.length];
+        document.getElementById('card-cluster').innerHTML =
+          `<span class="cluster-badge" style="border-color:${color};color:${color};">${escapeHtml(node.cluster_name)}</span>`;
+
+        const { meta, body } = parseFrontmatter(node.text_preview || '');
+        document.getElementById('card-meta').innerHTML = renderMeta(meta);
+        document.getElementById('card-preview').textContent = body || '(no content)';
+
+        const edges = adjacency[node.id] || [];
+        let html = `<div class="conn-header">CONNECTIONS (${edges.length})</div>`;
+        edges.forEach(e => {
+          const target = nodeById[e.id];
+          if (!target) return;
+          html += `<div class="conn-item"><div class="conn-edge"><span class="arrow">── </span><span class="label">${escapeHtml(e.label)}</span><span class="arrow"> ──▸</span></div><div class="conn-name" data-node-id="${target.id}">${escapeHtml(target.name)}</div></div>`;
+        });
+        document.getElementById('card-connections').innerHTML = html;
+      }
 
       card.classList.add('visible');
       resize.style.display = 'block';
@@ -2658,7 +2857,8 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
     document.getElementById('card-connections').addEventListener('click', e => {
       const nameEl = e.target.closest('.conn-name');
       if (!nameEl) return;
-      const id = parseInt(nameEl.dataset.nodeId);
+      const rawId = nameEl.dataset.nodeId;
+      const id = isExternalGraph ? rawId : parseInt(rawId);
       const node = nodeById[id];
       if (!node) return;
       handleNodeClick(node);
@@ -2690,32 +2890,38 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         .graphData({ nodes, links })
         .backgroundColor(`rgba(${hexToRgb(VFX.bgColor.val)},${VFX.bgAlpha.val})`)
         .showNavInfo(false)
-        .warmupTicks(60)
-        .cooldownTicks(Infinity)
+        .warmupTicks(isExternalGraph ? 200 : 60)
+        .cooldownTicks(isExternalGraph ? 400 : Infinity)
         .nodeThreeObject(node => createNodeObject(node))
         .nodeThreeObjectExtend(false)
         .nodeLabel(node => buildNodeTooltip(node))
         .linkColor(link => getLinkColor(link))
-        .linkWidth(link => getLinkWidth(link))
+        .linkWidth(isExternalGraph ? 0.3 : (link => getLinkWidth(link)))
         .linkOpacity(1.0)
         .linkHoverPrecision(VFX.linkHoverPrec.val)
         .linkLabel(link => buildLinkTooltip(link))
-        .linkDirectionalParticles(VFX.particleCount.val)
+        .linkDirectionalParticles(isExternalGraph ? 0 : VFX.particleCount.val)
         .linkDirectionalParticleWidth(VFX.particleWidth.val)
         .linkDirectionalParticleSpeed(VFX.particleSpeed.val)
         .linkDirectionalParticleColor(() => `rgba(${hexToRgb(VFX.particleColor.val)},${VFX.particleAlpha.val})`)
-        .linkCurvature(VFX.linkCurvatureVal.val)
+        .linkCurvature(isExternalGraph ? 0 : VFX.linkCurvatureVal.val)
         .linkVisibility(link => link.topology === currentLayout)
         .onNodeClick(handleNodeClick)
         .onNodeHover(handleNodeHover)
         .onBackgroundClick(handleBackgroundClick);
 
-      // Custom position force
-      Graph
-        .d3Force('position', createPositionForce(0.18))
-        .d3Force('center', null);
-      Graph.d3Force('link').strength(0.008).distance(100);
-      Graph.d3Force('charge').strength(-25);
+      // Force configuration
+      if (isExternalGraph) {
+        // Keep default center force (already set by ForceGraph3D)
+        Graph.d3Force('charge').strength(-8);
+        Graph.d3Force('link').distance(60).strength(0.02);
+      } else {
+        Graph
+          .d3Force('position', createPositionForce(0.18))
+          .d3Force('center', null);
+        Graph.d3Force('link').strength(0.008).distance(100);
+        Graph.d3Force('charge').strength(-25);
+      }
 
       // CSS2D overlay for constant-size node labels
       const graphEl = document.getElementById('graph');
@@ -2823,13 +3029,32 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         legend.appendChild(item);
       });
 
-      // Special markers
-      const special = document.createElement('div');
-      special.className = 'legend-special';
-      special.innerHTML =
-        '<div class="legend-item"><div class="legend-dot" style="border:2px solid #222222;background:transparent;"></div><span class="legend-label">EMBEDDING MEDOID</span></div>'
-        + '<div class="legend-item"><div class="legend-dot" style="border:2px solid #666666;background:transparent;"></div><span class="legend-label">LLM-NOMINATED CENTER</span></div>';
-      legend.appendChild(special);
+      if (isExternalGraph) {
+        // Edge type legend
+        const etCounts = externalGraphMeta?.EDGE_TYPE_COUNTS;
+        if (etCounts) {
+          const edgeSection = document.createElement('div');
+          edgeSection.className = 'legend-special';
+          edgeSection.innerHTML = '<div style="margin-bottom:4px;font-size:10px;opacity:0.5;letter-spacing:0.08em">EDGE TYPES</div>';
+          const sorted = Object.entries(etCounts).sort((a, b) => b[1] - a[1]);
+          sorted.forEach(([et, count]) => {
+            const item = document.createElement('div');
+            item.className = 'legend-item';
+            item.innerHTML = `<span class="legend-label" style="font-size:10px">${escapeHtml(et)}</span>`
+              + `<span style="margin-left:auto;opacity:0.4;font-size:10px">${count.toLocaleString()}</span>`;
+            edgeSection.appendChild(item);
+          });
+          legend.appendChild(edgeSection);
+        }
+      } else {
+        // Special markers for notes pipeline
+        const special = document.createElement('div');
+        special.className = 'legend-special';
+        special.innerHTML =
+          '<div class="legend-item"><div class="legend-dot" style="border:2px solid #222222;background:transparent;"></div><span class="legend-label">EMBEDDING MEDOID</span></div>'
+          + '<div class="legend-item"><div class="legend-dot" style="border:2px solid #666666;background:transparent;"></div><span class="legend-label">LLM-NOMINATED CENTER</span></div>';
+        legend.appendChild(special);
+      }
     }
 
     let clusterLabelEls = {};
