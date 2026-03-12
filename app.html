@@ -121,6 +121,16 @@
     .ob-dot--active  { background: var(--border); }
     .ob-dot--done    { background: #4caf50; }
 
+    #ob-skip {
+      position: absolute; bottom: 36px; right: 48px; z-index: 70;
+      font-family: var(--mono); font-size: 13px; font-weight: 600;
+      letter-spacing: .08em; color: var(--text-dim);
+      background: rgba(10,10,15,0.6); border: 1px solid var(--border);
+      padding: 10px 28px; cursor: pointer;
+      transition: color 0.2s, border-color 0.2s;
+    }
+    #ob-skip:hover { color: var(--text-bright); border-color: var(--text-bright); }
+
     /* ═══════════════════════════════════════════════
        Setup Screen
        ═══════════════════════════════════════════════ */
@@ -803,6 +813,10 @@
     .node-label.label-selected {
       opacity: 1 !important;
       font-weight: 700;
+    }
+    .node-label.label-selected .nl-bullet {
+      text-shadow: 0 0 8px currentColor, 0 0 16px currentColor;
+      font-size: 12px;
     }
     .node-label.label-dim {
       opacity: 0.06 !important;
@@ -1876,12 +1890,23 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
           lbl.style.color = '#ffffff';
           lbl.classList.add('label-selected');
           break;
+        case 'selected':
+          lbl.style.opacity = '1';
+          lbl.style.color = '#ffffff';
+          lbl.classList.add('label-selected');
+          break;
+        case 'sel-neighbor':
+          lbl.style.opacity = '0.7';
+          break;
         case 'neighbor':
           lbl.style.opacity = '0.09';
           break;
         case 'neighbor2':
           lbl.style.opacity = '0.35';
           lbl.classList.add('label-neighbor2');
+          break;
+        case 'sel-rest':
+          lbl.style.opacity = String(VFX.labelAlpha.val * 0.9);
           break;
         case 'dim':
           lbl.style.opacity = String(VFX.dimOpacity.val * 0.3);
@@ -2289,7 +2314,8 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       }
       if (selectedNode) {
         if (node === selectedNode) return '#ffffff';
-        return darken(color, 0.3);
+        if (neighborSets[selectedNode.id]?.has(node.id)) return color;
+        return darken(color, 0.1);
       }
       return color;
     }
@@ -2306,10 +2332,11 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         const s = typeof link.source === 'object' ? link.source : nodeById[link.source];
         const t = typeof link.target === 'object' ? link.target : nodeById[link.target];
         if (s === focus || t === focus) {
-          const alpha = hoverNode ? VFX.linkOpacityHover.val : VFX.linkAlpha.val;
+          const alpha = hoverNode ? VFX.linkOpacityHover.val : Math.min(VFX.linkAlpha.val * 2.5, 1);
           return `rgba(${rgb},${alpha})`;
         }
-        return `rgba(${rgb},0.02)`;
+        if (hoverNode) return `rgba(${rgb},0.02)`;
+        return `rgba(${rgb},${VFX.linkAlpha.val * 0.9})`;
       }
       return `rgba(${rgb},${VFX.linkAlpha.val})`;
     }
@@ -2319,7 +2346,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       if (focus) {
         const s = typeof link.source === 'object' ? link.source : nodeById[link.source];
         const t = typeof link.target === 'object' ? link.target : nodeById[link.target];
-        if (s === focus || t === focus) return VFX.linkWidthHover.val;
+        if (s === focus || t === focus) return hoverNode ? VFX.linkWidthHover.val : VFX.linkWidthVal.val * 1.5;
       }
       return VFX.linkWidthVal.val;
     }
@@ -2359,8 +2386,6 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
           ? getNeighborDepths(node)
           : { neighbors1: new Set(), neighbors2: new Set() };
 
-        const selDepths = selectedNode && !node ? getNeighborDepths(selectedNode) : null;
-
         Graph.graphData().nodes.forEach(n => {
           if (hoverNode) {
             if (n === hoverNode)             updateNodeAppearance(n, 'hover');
@@ -2368,11 +2393,11 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
             else if (neighbors2.has(n.id))   updateNodeAppearance(n, 'neighbor2');
             else                             updateNodeAppearance(n, 'dim');
           } else if (selectedNode) {
-            // Restore selection-tier view when hover clears
-            if (n === selectedNode)                          updateNodeAppearance(n, 'hover');
-            else if (selDepths.neighbors1.has(n.id))         updateNodeAppearance(n, 'neighbor');
-            else if (selDepths.neighbors2.has(n.id))         updateNodeAppearance(n, 'neighbor2');
-            else                                             updateNodeAppearance(n, 'dim');
+            // Restore selection view: selected + neighbors highlighted
+            const selN1 = neighborSets[selectedNode.id];
+            if (n === selectedNode)          updateNodeAppearance(n, 'selected');
+            else if (selN1?.has(n.id))       updateNodeAppearance(n, 'sel-neighbor');
+            else                             updateNodeAppearance(n, 'sel-rest');
           } else {
             updateNodeAppearance(n, 'normal');
           }
@@ -2386,27 +2411,19 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       selectedNode = node;
       showDetailCard(node);
 
-      // 3-tier label hierarchy: selected → neighbors → 2-hop → dim
-      const { neighbors1, neighbors2 } = getNeighborDepths(node);
+      // Selected node highlighted, neighbors slightly visible, rest normal
+      const { neighbors1 } = getNeighborDepths(node);
       Graph.graphData().nodes.forEach(n => {
-        if (n === node)                    updateNodeAppearance(n, 'hover');
-        else if (neighbors1.has(n.id))     updateNodeAppearance(n, 'neighbor');
-        else if (neighbors2.has(n.id))     updateNodeAppearance(n, 'neighbor2');
-        else                               updateNodeAppearance(n, 'dim');
+        if (n === node)                  updateNodeAppearance(n, 'selected');
+        else if (neighbors1.has(n.id))   updateNodeAppearance(n, 'sel-neighbor');
+        else                             updateNodeAppearance(n, 'sel-rest');
       });
 
-      // Dim unconnected links
-      Graph.linkOpacity(link => {
-        const s = typeof link.source === 'object' ? link.source : nodeById[link.source];
-        const t = typeof link.target === 'object' ? link.target : nodeById[link.target];
-        return (s === node || t === node) ? 1.0 : 0.03;
-      });
       Graph.linkColor(Graph.linkColor())
-           .linkWidth(Graph.linkWidth())
-           .linkDirectionalParticles(0);
+           .linkWidth(Graph.linkWidth());
 
-      // Focus camera: approach from current direction, stop 400 units from node
-      const distance = 400;
+      // Focus camera: approach from current direction, stop 700 units from node
+      const distance = 700;
       const cam = Graph.camera();
       const dx = cam.position.x - node.x;
       const dy = cam.position.y - node.y;
@@ -3114,6 +3131,8 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       }, 800);
     }
 
+    document.getElementById('ob-skip').addEventListener('click', () => completeOnboarding());
+
     function startOnboarding() {
       document.getElementById('onboarding').classList.remove('hidden');
       createObGraph();
@@ -3669,6 +3688,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       <span class="ob-dot" data-i="2"></span>
       <span class="ob-dot" data-i="3"></span>
     </div>
+    <button id="ob-skip">SKIP</button>
   </div>
 
   <!-- Hand Tracking elements -->
