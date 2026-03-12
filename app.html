@@ -989,12 +989,42 @@
 
   <script type="module">
     import { UMAP } from 'https://esm.sh/umap-js@1.4.0';
-    import ForceGraph3D from 'https://esm.sh/3d-force-graph@1';
-    import * as THREE from 'https://esm.sh/three@0.170.0';
-    import { CSS2DRenderer, CSS2DObject } from 'https://esm.sh/three@0.170.0/addons/renderers/CSS2DRenderer.js';
-    import { EffectComposer } from 'https://esm.sh/three@0.170.0/addons/postprocessing/EffectComposer.js';
-    import { RenderPass } from 'https://esm.sh/three@0.170.0/addons/postprocessing/RenderPass.js';
-    import { UnrealBloomPass } from 'https://esm.sh/three@0.170.0/addons/postprocessing/UnrealBloomPass.js';
+    import ForceGraph3D from 'https://esm.sh/3d-force-graph@1?deps=three@0.175.0';
+    import * as THREE from 'https://esm.sh/three@0.175.0';
+    import { CSS2DRenderer, CSS2DObject } from 'https://esm.sh/three@0.175.0/addons/renderers/CSS2DRenderer.js';
+
+    // ═══════════════════════════════════════════════
+    // WebGPU Detection + Conditional Imports
+    // ═══════════════════════════════════════════════
+    let gpuAvailable = false;
+    let gpuDevice = null;
+    let WebGPURenderer = null;
+    let bloomModule;
+
+    try {
+      if (navigator.gpu) {
+        const adapter = await navigator.gpu.requestAdapter();
+        if (adapter) {
+          gpuDevice = await adapter.requestDevice();
+          const wgpuMod = await import('https://esm.sh/three@0.175.0/addons/renderers/webgpu/WebGPURenderer.js');
+          WebGPURenderer = wgpuMod.default || wgpuMod.WebGPURenderer;
+          const { PostProcessing } = await import('https://esm.sh/three@0.175.0/addons/postprocessing/PostProcessing.js');
+          const tsl = await import('https://esm.sh/three@0.175.0/tsl');
+          const bloomMod = await import('https://esm.sh/three@0.175.0/addons/tsl/display/BloomNode.js');
+          bloomModule = { type: 'webgpu', PostProcessing, pass: tsl.pass, bloom: bloomMod.bloom };
+          gpuAvailable = true;
+        }
+      }
+    } catch (e) {
+      console.warn('WebGPU init failed, falling back to WebGL:', e);
+    }
+
+    if (!gpuAvailable) {
+      const { EffectComposer } = await import('https://esm.sh/three@0.175.0/addons/postprocessing/EffectComposer.js');
+      const { RenderPass } = await import('https://esm.sh/three@0.175.0/addons/postprocessing/RenderPass.js');
+      const { UnrealBloomPass } = await import('https://esm.sh/three@0.175.0/addons/postprocessing/UnrealBloomPass.js');
+      bloomModule = { type: 'webgl', EffectComposer, RenderPass, UnrealBloomPass };
+    }
 
     // ═══════════════════════════════════════════════
     // API Key Persistence
@@ -1122,7 +1152,7 @@
     const setupStatus = document.getElementById('setup-status');
 
     // Restore graph from a cached session object
-    function restoreFromCache(session) {
+    async function restoreFromCache(session) {
       document.getElementById('setup').classList.add('hidden');
       document.getElementById('main').classList.remove('hidden');
       document.getElementById('reanalyze-btn').classList.remove('hidden');
@@ -1136,7 +1166,7 @@
         distrib: (session.labeledEdges || []).map(e => ({ ...e, topology: 'distrib' })),
       };
       const combined = [...edgeSets.central, ...edgeSets.decentral, ...edgeSets.distrib];
-      initGraph(allNodes, combined);
+      await initGraph(allNodes, combined);
       buildLegend(session.clusterNames);
       buildClusterLabels(session.clusterNames);
       const activeEdges = edgeSets[currentLayout] || [];
@@ -1173,7 +1203,7 @@
         if (session && session.fingerprint === fp) {
           setupStatus.textContent = `CACHE HIT — RESTORING ${session.nodeCount} NOTES`;
           await sleep(300);
-          restoreFromCache(session);
+          await restoreFromCache(session);
           return;
         }
 
@@ -1393,7 +1423,7 @@
 
       setBootStage('LOADING GRAPH...', `${mapped.nodes.length} NODES`);
 
-      initGraph(mapped.nodes, mapped.edges);
+      await initGraph(mapped.nodes, mapped.edges);
       buildLegend(mapped.clusterNames);
       buildClusterLabels(mapped.clusterNames);
       buildReadouts(mapped.nodes.length, mapped.edges.length);
@@ -1426,7 +1456,7 @@
           setupStatus.textContent = 'ERROR: NO CACHED SESSION FOUND';
           return;
         }
-        restoreFromCache(session);
+        await restoreFromCache(session);
       } catch (err) {
         setupStatus.textContent = 'ERROR: ' + err.message.toUpperCase();
       }
@@ -2269,9 +2299,15 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
 
     function refreshPostFx() {
       if (!bloomPass) return;
-      bloomPass.strength = VFX.bloomStrength.val;
-      bloomPass.radius = VFX.bloomRadius.val;
-      bloomPass.threshold = VFX.bloomThreshold.val;
+      if (bloomModule.type === 'webgpu') {
+        bloomPass.strength.value = VFX.bloomStrength.val;
+        bloomPass.radius.value = VFX.bloomRadius.val;
+        bloomPass.threshold.value = VFX.bloomThreshold.val;
+      } else {
+        bloomPass.strength = VFX.bloomStrength.val;
+        bloomPass.radius = VFX.bloomRadius.val;
+        bloomPass.threshold = VFX.bloomThreshold.val;
+      }
     }
 
     function refreshColors() {
@@ -2450,7 +2486,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         // Initialize graph with white/uncolored nodes (no annotations yet)
         setBootStage('COMPUTING TOPOLOGY...', 'INITIALIZING GRAPH');
         await sleep(50);
-        initGraph(graphNodes, []);
+        await initGraph(graphNodes, []);
 
         // ── STAGE 4: ANNOTATING ──
         setBootStage('ANNOTATING...', 'CENTER NOMINATION');
@@ -2543,6 +2579,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
 
     let Graph;
     let bloomPass;
+    let gpuSim = null;
     let currentLayout = 'central';
     let hoverNode = null;
     let selectedNode = null;
@@ -2977,9 +3014,395 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       }
     });
 
+    // ── GPU Force Simulation (WGSL compute shaders) ──
+
+    const WGSL_PARAMS_STRUCT = `
+struct SimParams {
+  nodeCount: u32,
+  edgeCount: u32,
+  chargeStrength: f32,
+  linkStrength: f32,
+  linkDistance: f32,
+  positionStrength: f32,
+  damping: f32,
+  dt: f32,
+};`;
+
+    const TILE_SIZE = 256;
+    const WGSL_CHARGE = WGSL_PARAMS_STRUCT + `
+const TILE = ${TILE_SIZE}u;
+var<workgroup> tile: array<vec4f, ${TILE_SIZE}>;
+
+@group(0) @binding(0) var<storage, read> positions: array<vec4f>;
+@group(0) @binding(1) var<storage, read_write> velocities: array<vec4f>;
+@group(0) @binding(2) var<uniform> params: SimParams;
+
+@compute @workgroup_size(${TILE_SIZE})
+fn main(@builtin(global_invocation_id) gid: vec3u,
+        @builtin(local_invocation_id) lid: vec3u) {
+  let i = gid.x;
+  let li = lid.x;
+  let pi = select(vec3f(0.0), positions[i].xyz, i < params.nodeCount);
+  var force = vec3f(0.0);
+  let numTiles = (params.nodeCount + TILE - 1u) / TILE;
+
+  for (var t = 0u; t < numTiles; t = t + 1u) {
+    let j = t * TILE + li;
+    tile[li] = select(vec4f(0.0, 0.0, 0.0, -1.0), positions[j], j < params.nodeCount);
+    workgroupBarrier();
+
+    for (var k = 0u; k < TILE; k = k + 1u) {
+      let tj = t * TILE + k;
+      if (tj >= params.nodeCount || tj == i) { continue; }
+      let diff = pi - tile[k].xyz;
+      let dist = max(length(diff), 0.1);
+      force -= normalize(diff) * params.chargeStrength / (dist * dist);
+    }
+    workgroupBarrier();
+  }
+
+  if (i < params.nodeCount) {
+    velocities[i] = vec4f(velocities[i].xyz + force * params.dt, 0.0);
+  }
+}`;
+
+    // Link force: per-edge dispatch O(E), accumulates via atomicAdd (fixed-point i32)
+    const LINK_FP_SCALE = 1024.0; // fixed-point precision for atomic accumulation
+    const WGSL_LINK_SCATTER = WGSL_PARAMS_STRUCT + `
+const FP_SCALE: f32 = ${LINK_FP_SCALE};
+
+@group(0) @binding(0) var<storage, read> positions: array<vec4f>;
+@group(0) @binding(1) var<storage, read_write> forceAccum: array<atomic<i32>>;
+@group(0) @binding(2) var<storage, read> edges: array<vec2u>;
+@group(0) @binding(3) var<uniform> params: SimParams;
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let e = gid.x;
+  if (e >= params.edgeCount) { return; }
+  let src = edges[e].x;
+  let tgt = edges[e].y;
+  let diff = positions[tgt].xyz - positions[src].xyz;
+  let dist = max(length(diff), 0.01);
+  let displacement = dist - params.linkDistance;
+  let f = normalize(diff) * displacement * params.linkStrength;
+  let fi = vec3i(f * FP_SCALE);
+  // Accumulate on source (positive direction)
+  atomicAdd(&forceAccum[src * 3u + 0u], fi.x);
+  atomicAdd(&forceAccum[src * 3u + 1u], fi.y);
+  atomicAdd(&forceAccum[src * 3u + 2u], fi.z);
+  // Accumulate on target (negative direction)
+  atomicAdd(&forceAccum[tgt * 3u + 0u], -fi.x);
+  atomicAdd(&forceAccum[tgt * 3u + 1u], -fi.y);
+  atomicAdd(&forceAccum[tgt * 3u + 2u], -fi.z);
+}`;
+
+    const WGSL_LINK_GATHER = WGSL_PARAMS_STRUCT + `
+const FP_SCALE: f32 = ${LINK_FP_SCALE};
+
+@group(0) @binding(0) var<storage, read_write> velocities: array<vec4f>;
+@group(0) @binding(1) var<storage, read_write> forceAccum: array<atomic<i32>>;
+@group(0) @binding(2) var<uniform> params: SimParams;
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= params.nodeCount) { return; }
+  let fx = f32(atomicExchange(&forceAccum[i * 3u + 0u], 0)) / FP_SCALE;
+  let fy = f32(atomicExchange(&forceAccum[i * 3u + 1u], 0)) / FP_SCALE;
+  let fz = f32(atomicExchange(&forceAccum[i * 3u + 2u], 0)) / FP_SCALE;
+  velocities[i] = vec4f(velocities[i].xyz + vec3f(fx, fy, fz) * params.dt, 0.0);
+}`;
+
+    const WGSL_POSITION = WGSL_PARAMS_STRUCT + `
+@group(0) @binding(0) var<storage, read> positions: array<vec4f>;
+@group(0) @binding(1) var<storage, read_write> velocities: array<vec4f>;
+@group(0) @binding(2) var<storage, read> targets: array<vec4f>;
+@group(0) @binding(3) var<uniform> params: SimParams;
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= params.nodeCount) { return; }
+  let diff = targets[i].xyz - positions[i].xyz;
+  velocities[i] = vec4f(velocities[i].xyz + diff * params.positionStrength * params.dt, 0.0);
+}`;
+
+    const WGSL_INTEGRATE = WGSL_PARAMS_STRUCT + `
+@group(0) @binding(0) var<storage, read_write> positions: array<vec4f>;
+@group(0) @binding(1) var<storage, read_write> velocities: array<vec4f>;
+@group(0) @binding(2) var<uniform> params: SimParams;
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= params.nodeCount) { return; }
+  let vel = velocities[i].xyz * params.damping;
+  let pos = positions[i].xyz + vel;
+  positions[i] = vec4f(pos, 0.0);
+  velocities[i] = vec4f(vel, 0.0);
+}`;
+
+    class GPUForceSimulation {
+      constructor(device, nodes, edges, layoutKey, scale) {
+        this.device = device;
+        this.nodes = nodes;
+        this.nodeCount = nodes.length;
+        this.edgeCount = edges.length;
+        this.scale = scale;
+        this.positions = new Float32Array(this.nodeCount * 3);
+        this._disposed = false;
+
+        // Initialize positions from nodes
+        nodes.forEach((n, i) => {
+          this.positions[i * 3] = n.x || 0;
+          this.positions[i * 3 + 1] = n.y || 0;
+          this.positions[i * 3 + 2] = n.z || 0;
+        });
+
+        // Build edge index array
+        const nodeIdToIdx = new Map();
+        nodes.forEach((n, i) => nodeIdToIdx.set(n.id, i));
+        const edgeIndices = new Uint32Array(Math.max(edges.length * 2, 2));
+        edges.forEach((e, i) => {
+          const src = typeof e.source === 'object' ? e.source.id : e.source;
+          const tgt = typeof e.target === 'object' ? e.target.id : e.target;
+          edgeIndices[i * 2] = nodeIdToIdx.get(src) || 0;
+          edgeIndices[i * 2 + 1] = nodeIdToIdx.get(tgt) || 0;
+        });
+
+        // Create GPU buffers (vec4f = 16 bytes per element)
+        const posData = new Float32Array(this.nodeCount * 4);
+        nodes.forEach((n, i) => {
+          posData[i * 4] = n.x || 0;
+          posData[i * 4 + 1] = n.y || 0;
+          posData[i * 4 + 2] = n.z || 0;
+        });
+
+        this.posBuffer = this._createStorageBuffer(posData, true);
+        this.velBuffer = this._createStorageBuffer(new Float32Array(this.nodeCount * 4), false);
+        this.targetBuffer = this._createStorageBuffer(new Float32Array(this.nodeCount * 4), false, true);
+        this.edgeBuffer = this._createStorageBufferU32(edgeIndices);
+
+        // Atomic force accumulator for link scatter/gather (i32 x 3 per node)
+        this.forceAccumBuffer = device.createBuffer({
+          size: this.nodeCount * 3 * 4,
+          usage: GPUBufferUsage.STORAGE,
+          mappedAtCreation: true,
+        });
+        new Int32Array(this.forceAccumBuffer.getMappedRange()).fill(0);
+        this.forceAccumBuffer.unmap();
+
+        // Params uniform (8 x float32 = 32 bytes)
+        this.params = {
+          nodeCount: this.nodeCount,
+          edgeCount: this.edgeCount,
+          chargeStrength: -25,
+          linkStrength: 0.008,
+          linkDistance: 100,
+          positionStrength: 0.18,
+          damping: 0.6,
+          dt: 0.02,
+        };
+        this.paramsBuffer = device.createBuffer({
+          size: 32,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+        this._writeParams();
+
+        // Read buffer
+        this.readBuffer = device.createBuffer({
+          size: this.nodeCount * 4 * 4,
+          usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+        });
+
+        this._createPipelines();
+        this.setTargets(layoutKey);
+      }
+
+      _createStorageBuffer(data, copySrc = false, copyDst = false) {
+        let usage = GPUBufferUsage.STORAGE;
+        if (copySrc) usage |= GPUBufferUsage.COPY_SRC;
+        if (copyDst) usage |= GPUBufferUsage.COPY_DST;
+        const buf = this.device.createBuffer({
+          size: data.byteLength,
+          usage,
+          mappedAtCreation: true,
+        });
+        new Float32Array(buf.getMappedRange()).set(data);
+        buf.unmap();
+        return buf;
+      }
+
+      _createStorageBufferU32(data) {
+        const buf = this.device.createBuffer({
+          size: data.byteLength,
+          usage: GPUBufferUsage.STORAGE,
+          mappedAtCreation: true,
+        });
+        new Uint32Array(buf.getMappedRange()).set(data);
+        buf.unmap();
+        return buf;
+      }
+
+      _writeParams() {
+        const ab = new ArrayBuffer(32);
+        new Uint32Array(ab, 0, 2).set([this.params.nodeCount, this.params.edgeCount]);
+        new Float32Array(ab, 8, 6).set([
+          this.params.chargeStrength, this.params.linkStrength,
+          this.params.linkDistance, this.params.positionStrength,
+          this.params.damping, this.params.dt,
+        ]);
+        this.device.queue.writeBuffer(this.paramsBuffer, 0, ab);
+      }
+
+      _createPipelines() {
+        const dev = this.device;
+        const makePipeline = (code) => {
+          const module = dev.createShaderModule({ code });
+          return dev.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'main' } });
+        };
+
+        this.chargePipeline = makePipeline(WGSL_CHARGE);
+        this.linkScatterPipeline = makePipeline(WGSL_LINK_SCATTER);
+        this.linkGatherPipeline = makePipeline(WGSL_LINK_GATHER);
+        this.posPipeline = makePipeline(WGSL_POSITION);
+        this.integratePipeline = makePipeline(WGSL_INTEGRATE);
+
+        // Bind groups
+        this.chargeBindGroup = dev.createBindGroup({
+          layout: this.chargePipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: { buffer: this.posBuffer } },
+            { binding: 1, resource: { buffer: this.velBuffer } },
+            { binding: 2, resource: { buffer: this.paramsBuffer } },
+          ],
+        });
+
+        this.linkScatterBindGroup = dev.createBindGroup({
+          layout: this.linkScatterPipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: { buffer: this.posBuffer } },
+            { binding: 1, resource: { buffer: this.forceAccumBuffer } },
+            { binding: 2, resource: { buffer: this.edgeBuffer } },
+            { binding: 3, resource: { buffer: this.paramsBuffer } },
+          ],
+        });
+
+        this.linkGatherBindGroup = dev.createBindGroup({
+          layout: this.linkGatherPipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: { buffer: this.velBuffer } },
+            { binding: 1, resource: { buffer: this.forceAccumBuffer } },
+            { binding: 2, resource: { buffer: this.paramsBuffer } },
+          ],
+        });
+
+        this.posBindGroup = dev.createBindGroup({
+          layout: this.posPipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: { buffer: this.posBuffer } },
+            { binding: 1, resource: { buffer: this.velBuffer } },
+            { binding: 2, resource: { buffer: this.targetBuffer } },
+            { binding: 3, resource: { buffer: this.paramsBuffer } },
+          ],
+        });
+
+        this.integrateBindGroup = dev.createBindGroup({
+          layout: this.integratePipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: { buffer: this.posBuffer } },
+            { binding: 1, resource: { buffer: this.velBuffer } },
+            { binding: 2, resource: { buffer: this.paramsBuffer } },
+          ],
+        });
+      }
+
+      setTargets(layoutKey) {
+        const targets = new Float32Array(this.nodeCount * 4);
+        this.nodes.forEach((n, i) => {
+          targets[i * 4] = (n['x_' + layoutKey] || 0) * this.scale;
+          targets[i * 4 + 1] = (n['y_' + layoutKey] || 0) * this.scale;
+          targets[i * 4 + 2] = (n['z_' + layoutKey] || 0) * this.scale;
+        });
+        this.device.queue.writeBuffer(this.targetBuffer, 0, targets);
+      }
+
+      setChargeStrength(s) { this.params.chargeStrength = s; this._writeParams(); }
+      setLinkStrength(s, dist) {
+        this.params.linkStrength = s;
+        if (dist !== undefined) this.params.linkDistance = dist;
+        this._writeParams();
+      }
+      setPositionStrength(s) { this.params.positionStrength = s; this._writeParams(); }
+
+      async tick() {
+        if (this._disposed) return;
+        const wg = Math.ceil(this.nodeCount / 256);
+        const encoder = this.device.createCommandEncoder();
+
+        const chargePass = encoder.beginComputePass();
+        chargePass.setPipeline(this.chargePipeline);
+        chargePass.setBindGroup(0, this.chargeBindGroup);
+        chargePass.dispatchWorkgroups(wg);
+        chargePass.end();
+
+        // Link force: scatter per-edge, then gather per-node
+        const linkScatter = encoder.beginComputePass();
+        linkScatter.setPipeline(this.linkScatterPipeline);
+        linkScatter.setBindGroup(0, this.linkScatterBindGroup);
+        linkScatter.dispatchWorkgroups(Math.ceil(this.edgeCount / 256));
+        linkScatter.end();
+
+        const linkGather = encoder.beginComputePass();
+        linkGather.setPipeline(this.linkGatherPipeline);
+        linkGather.setBindGroup(0, this.linkGatherBindGroup);
+        linkGather.dispatchWorkgroups(wg);
+        linkGather.end();
+
+        const posPass = encoder.beginComputePass();
+        posPass.setPipeline(this.posPipeline);
+        posPass.setBindGroup(0, this.posBindGroup);
+        posPass.dispatchWorkgroups(wg);
+        posPass.end();
+
+        const intPass = encoder.beginComputePass();
+        intPass.setPipeline(this.integratePipeline);
+        intPass.setBindGroup(0, this.integrateBindGroup);
+        intPass.dispatchWorkgroups(wg);
+        intPass.end();
+
+        encoder.copyBufferToBuffer(this.posBuffer, 0, this.readBuffer, 0, this.nodeCount * 4 * 4);
+        this.device.queue.submit([encoder.finish()]);
+
+        await this.readBuffer.mapAsync(GPUMapMode.READ);
+        const data = new Float32Array(this.readBuffer.getMappedRange());
+        for (let i = 0; i < this.nodeCount; i++) {
+          this.positions[i * 3] = data[i * 4];
+          this.positions[i * 3 + 1] = data[i * 4 + 1];
+          this.positions[i * 3 + 2] = data[i * 4 + 2];
+        }
+        this.readBuffer.unmap();
+      }
+
+      dispose() {
+        this._disposed = true;
+        this.posBuffer.destroy();
+        this.velBuffer.destroy();
+        this.targetBuffer.destroy();
+        this.edgeBuffer.destroy();
+        this.forceAccumBuffer.destroy();
+        this.paramsBuffer.destroy();
+        this.readBuffer.destroy();
+      }
+    }
+
     // ── initGraph ──
 
-    function initGraph(nodes, edges) {
+    async function initGraph(nodes, edges) {
+      // Dispose previous GPU simulation if any
+      if (gpuSim) { gpuSim.dispose(); gpuSim = null; }
+
       const links = edges.map(e => ({
         source: e.source,
         target: e.target,
@@ -3053,18 +3476,93 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         css2d.setSize(w, h);
       });
 
-      // Post-processing bloom
-      const renderer = Graph.renderer();
-      const composer = new EffectComposer(renderer);
-      composer.addPass(new RenderPass(Graph.scene(), Graph.camera()));
-      bloomPass = new UnrealBloomPass(
-        new THREE.Vector2(graphEl.clientWidth, graphEl.clientHeight),
-        VFX.bloomStrength.val,
-        VFX.bloomRadius.val,
-        VFX.bloomThreshold.val
-      );
-      composer.addPass(bloomPass);
-      Graph.postProcessingComposer(composer);
+      // Post-processing bloom (dual-path: WebGPU TSL or WebGL legacy)
+      if (gpuAvailable) {
+        // Create WebGPU renderer and overlay it
+        const glRenderer = Graph.renderer();
+        const gpuRenderer = new WebGPURenderer({ antialias: true });
+        await gpuRenderer.init();
+        gpuRenderer.setSize(graphEl.clientWidth, graphEl.clientHeight);
+        gpuRenderer.setPixelRatio(window.devicePixelRatio);
+
+        const gpuCanvas = gpuRenderer.domElement;
+        gpuCanvas.style.position = 'absolute';
+        gpuCanvas.style.top = '0';
+        gpuCanvas.style.left = '0';
+        gpuCanvas.style.pointerEvents = 'none';
+        graphEl.insertBefore(gpuCanvas, graphEl.firstChild);
+
+        // Make WebGL canvas transparent (keeps events/controls working)
+        glRenderer.domElement.style.opacity = '0';
+
+        // TSL post-processing
+        const postProcessing = new bloomModule.PostProcessing(gpuRenderer);
+        const scenePass = bloomModule.pass(Graph.scene(), Graph.camera());
+        bloomPass = bloomModule.bloom(scenePass.getTextureNode('output'));
+        bloomPass.threshold.value = VFX.bloomThreshold.val;
+        bloomPass.strength.value = VFX.bloomStrength.val;
+        bloomPass.radius.value = VFX.bloomRadius.val;
+        postProcessing.outputNode = bloomPass;
+
+        Graph.postProcessingComposer({ render: () => postProcessing.render() });
+
+        // Sync resize for WebGPU renderer
+        const origSetSize = glRenderer.setSize.bind(glRenderer);
+        glRenderer.setSize = (w, h, updateStyle) => {
+          origSetSize(w, h, updateStyle);
+          gpuRenderer.setSize(w, h);
+        };
+      } else {
+        const renderer = Graph.renderer();
+        const composer = new bloomModule.EffectComposer(renderer);
+        composer.addPass(new bloomModule.RenderPass(Graph.scene(), Graph.camera()));
+        bloomPass = new bloomModule.UnrealBloomPass(
+          new THREE.Vector2(graphEl.clientWidth, graphEl.clientHeight),
+          VFX.bloomStrength.val,
+          VFX.bloomRadius.val,
+          VFX.bloomThreshold.val
+        );
+        composer.addPass(bloomPass);
+        Graph.postProcessingComposer(composer);
+      }
+
+      // GPU compute force simulation (replaces d3-force when available)
+      if (gpuAvailable && !isExternalGraph) {
+        Graph.cooldownTicks(0);
+        Graph.d3Force('charge', null);
+        Graph.d3Force('link', null);
+        Graph.d3Force('center', null);
+        Graph.d3Force('position', null);
+
+        const activeEdges = edges.filter(e => e.topology === currentLayout);
+        gpuSim = new GPUForceSimulation(gpuDevice, nodes, activeEdges, currentLayout, SCALE);
+        gpuSim.setChargeStrength(-25);
+        gpuSim.setLinkStrength(0.008, 100);
+
+        (function gpuTick() {
+          if (!gpuSim || gpuSim._disposed) return;
+          gpuSim.tick().then(() => {
+            if (!gpuSim || gpuSim._disposed || !Graph) return;
+            const gNodes = Graph.graphData().nodes;
+            for (let i = 0; i < gNodes.length; i++) {
+              gNodes[i].x = gpuSim.positions[i * 3];
+              gNodes[i].y = gpuSim.positions[i * 3 + 1];
+              gNodes[i].z = gpuSim.positions[i * 3 + 2];
+              if (gNodes[i].__threeObj) {
+                gNodes[i].__threeObj.position.set(
+                  gpuSim.positions[i * 3],
+                  gpuSim.positions[i * 3 + 1],
+                  gpuSim.positions[i * 3 + 2]
+                );
+              }
+            }
+            Graph.refresh();
+            requestAnimationFrame(gpuTick);
+          }).catch(err => {
+            console.warn('GPU sim tick error:', err);
+          });
+        })();
+      }
 
       // Set initial camera to the "H" recenter position
       Graph.cameraPosition({ x: 0, y: 0, z: SCALE * 2.5 }, { x: 0, y: 0, z: 0 });
@@ -3109,11 +3607,18 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
           Graph.linkVisibility(link => link.topology === currentLayout);
           rebuildLookups(allNodes, activeEdges);
           buildReadouts(allNodes.length, activeEdges.length);
-          // Soften position force, reheat, then restore — smooth ~2s drift
-          const posForce = Graph.d3Force('position');
-          posForce.strength(0.03);
-          Graph.d3ReheatSimulation();
-          setTimeout(() => posForce.strength(0.18), 3000);
+          if (gpuSim) {
+            // Update GPU sim targets for new layout
+            gpuSim.setTargets(currentLayout);
+            gpuSim.setPositionStrength(0.03);
+            setTimeout(() => { if (gpuSim) gpuSim.setPositionStrength(0.18); }, 3000);
+          } else {
+            // Soften position force, reheat, then restore — smooth ~2s drift
+            const posForce = Graph.d3Force('position');
+            posForce.strength(0.03);
+            Graph.d3ReheatSimulation();
+            setTimeout(() => posForce.strength(0.18), 3000);
+          }
         }
       });
     });
@@ -4251,6 +4756,14 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
     });
     _htObserver.observe(document.getElementById('setup'),
       { attributes: true, attributeFilter: ['class'] });
+
+    // ═══════════════════════════════════════════════
+    // Renderer Badge (bottom-right debug indicator)
+    // ═══════════════════════════════════════════════
+    const rendererBadge = document.createElement('div');
+    rendererBadge.textContent = gpuAvailable ? 'WebGPU' : 'WebGL';
+    rendererBadge.style.cssText = 'position:fixed;bottom:8px;right:8px;font:11px var(--mono);color:var(--text-dim);opacity:0.5;z-index:99;pointer-events:none;';
+    document.body.appendChild(rendererBadge);
 
   </script>
 
