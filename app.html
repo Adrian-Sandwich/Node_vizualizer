@@ -279,12 +279,17 @@
        ═══════════════════════════════════════════════ */
 
     /* -- Graph container -- */
-    #graph {
+    #main {
+      display: flex;
       width: 100vw;
       height: 100vh;
-      position: absolute;
-      top: 0;
-      left: 0;
+    }
+
+    #graph {
+      flex: 1;
+      height: 100vh;
+      position: relative;
+      min-width: 0;
     }
 
     /* -- Title (top-left) -- */
@@ -457,6 +462,41 @@
       line-height: 1.6;
     }
 
+    /* ── Hover info box (top-left floating card) ── */
+    #hover-info {
+      position: fixed;
+      top: 50px;
+      left: 20px;
+      z-index: 18;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      padding: 12px 16px;
+      font-family: var(--mono);
+      max-width: 320px;
+      display: none;
+      pointer-events: none;
+    }
+    #hover-info.visible { display: block; }
+    #hover-info-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-bright);
+      margin-bottom: 4px;
+      word-break: break-all;
+    }
+    #hover-info-type {
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      color: var(--text-dim);
+      margin-bottom: 4px;
+    }
+    #hover-info-detail {
+      font-size: 10px;
+      color: var(--text);
+      line-height: 1.5;
+      opacity: 0.8;
+    }
+
     #key-hint {
       position: fixed;
       bottom: 16px;
@@ -518,30 +558,23 @@
 
     /* -- Side Panel (Detail Card) -- */
     #detail-card {
-      position: fixed;
-      top: 0;
-      right: 0;
       width: var(--panel-width, 360px);
       height: 100vh;
       overflow-y: auto;
-      background: var(--bg-panel);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
+      background: var(--bg);
       border-left: 1px solid var(--border);
       z-index: 15;
       padding: 20px;
-      transform: translateX(100%);
-      transition: transform 300ms ease;
+      display: none;
+      flex-shrink: 0;
     }
 
     #detail-card.visible {
-      transform: translateX(0);
+      display: block;
     }
 
     /* -- Panel Resize Handle -- */
     #panel-resize {
-      position: fixed;
-      top: 0;
       width: 5px;
       height: 100vh;
       cursor: col-resize;
@@ -549,6 +582,7 @@
       background: transparent;
       transition: background 150ms ease;
       display: none;
+      flex-shrink: 0;
     }
 
     #panel-resize:hover,
@@ -928,6 +962,13 @@
     <!-- Graph container -->
     <div id="graph"></div>
 
+    <!-- Hover info box (top-left) -->
+    <div id="hover-info">
+      <div id="hover-info-name"></div>
+      <div id="hover-info-type"></div>
+      <div id="hover-info-detail"></div>
+    </div>
+
     <!-- Title: top-left -->
     <div id="title">GRAPH VISUALIZER</div>
     <button id="reanalyze-btn" class="hidden">RE-ANALYZE</button>
@@ -1006,7 +1047,8 @@
         const adapter = await navigator.gpu.requestAdapter();
         if (adapter) {
           gpuDevice = await adapter.requestDevice();
-          const wgpuMod = await import('https://esm.sh/three@0.175.0/addons/renderers/webgpu/WebGPURenderer.js');
+          const wgpuMod = await import('https://esm.sh/three@0.175.0/addons/renderers/webgpu/WebGPURenderer.js').catch(() => null);
+          if (!wgpuMod) throw new Error('WebGPU renderer not available');
           WebGPURenderer = wgpuMod.default || wgpuMod.WebGPURenderer;
           const { PostProcessing } = await import('https://esm.sh/three@0.175.0/addons/postprocessing/PostProcessing.js');
           const tsl = await import('https://esm.sh/three@0.175.0/tsl');
@@ -2566,105 +2608,98 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       const color = CLUSTER_COLORS[node.cluster_id % CLUSTER_COLORS.length];
       const isSpecial = node.is_medoid || node.is_llm_center;
       const baseScale = isSpecial ? VFX.nodeScaleSpecial.val : VFX.nodeScale.val;
-
-      // Invisible hit-target sprite for raycasting
-      const hitMat = new THREE.SpriteMaterial({
-        transparent: true,
-        opacity: 0,
-        depthWrite: false,
-      });
-      const hitSprite = new THREE.Sprite(hitMat);
-      hitSprite.scale.set(baseScale, baseScale, 1);
+      const largeGraph = isExternalGraph;
 
       const group = new THREE.Group();
-      group.add(hitSprite);
 
-      // Selection ring — sprite always faces camera
-      if (!createNodeObject._ringTex) {
-        const rc = document.createElement('canvas');
-        rc.width = 64; rc.height = 64;
-        const rx = rc.getContext('2d');
-        rx.beginPath();
-        rx.arc(32, 32, 28, 0, Math.PI * 2);
-        rx.lineWidth = 3;
-        rx.strokeStyle = '#111111';
-        rx.stroke();
-        createNodeObject._ringTex = new THREE.CanvasTexture(rc);
-      }
-      const ringMat = new THREE.SpriteMaterial({
-        map: createNodeObject._ringTex,
-        transparent: true,
-        opacity: 0,
-        depthWrite: false,
-      });
-      const ringSprite = new THREE.Sprite(ringMat);
-      ringSprite.scale.set(baseScale * 1.2, baseScale * 1.2, 1);
-      group.add(ringSprite);
-      node.__ringMat = ringMat;
+      if (largeGraph) {
+        // External graph: colored sphere only, no labels
+        const sphereGeo = createNodeObject._sphereGeo ||
+          (createNodeObject._sphereGeo = new THREE.SphereGeometry(1, 12, 8));
+        const sphereMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1.0 });
+        const mesh = new THREE.Mesh(sphereGeo, sphereMat);
+        const s = isSpecial ? 4 : 2;
+        mesh.scale.set(s, s, s);
+        group.add(mesh);
+        node.__sphereMat = sphereMat;
+      } else {
+        // Notes pipeline: hit sprite + CSS2D label
+        const hitMat = new THREE.SpriteMaterial({
+          transparent: true, opacity: 0, depthWrite: false,
+        });
+        const hitSprite = new THREE.Sprite(hitMat);
+        hitSprite.scale.set(baseScale, baseScale, 1);
+        group.add(hitSprite);
 
-      // CSS2D label — constant screen-space size regardless of zoom
-      const lines = wrapNodeLabel(node.name);
-      if (lines.length) {
-        const div = document.createElement('div');
-        div.className = 'node-label' + (isSpecial ? ' node-label--special' : '');
-        div.style.color = VFX.labelColor.val;
-        div.style.opacity = String(VFX.labelAlpha.val);
-        let html = `<span class="nl-bullet" style="color:${color};opacity:${VFX.clusterAlpha.val}">\u25A0</span><span class="nl-text"> ${lines[0]}`;
-        for (let i = 1; i < lines.length; i++) html += `<br>${lines[i]}`;
-        html += '</span>';
-        div.innerHTML = html;
-        const labelObj = new CSS2DObject(div);
-        group.add(labelObj);
-        node.__labelDiv = div;
+        const nodeName = node.name || '';
+        if (nodeName) {
+          const div = document.createElement('div');
+          div.className = 'node-label' + (isSpecial ? ' node-label--special' : '');
+          div.style.color = VFX.labelColor.val;
+          div.style.opacity = String(VFX.labelAlpha.val);
+          const lines = wrapNodeLabel(nodeName);
+          let html = `<span class="nl-bullet" style="color:${color};opacity:${VFX.clusterAlpha.val}">\u25A0</span><span class="nl-text"> ${lines[0]}`;
+          for (let i = 1; i < lines.length; i++) html += `<br>${lines[i]}`;
+          html += '</span>';
+          div.innerHTML = html;
+          const labelObj = new CSS2DObject(div);
+          group.add(labelObj);
+          node.__labelDiv = div;
+        }
       }
 
+      node.__largeGraph = largeGraph;
       node.__baseScale = baseScale;
       return group;
     }
 
     function updateNodeAppearance(node, state) {
       const lbl = node.__labelDiv;
-      if (!lbl) return;
-      // Always reset all state classes and inline overrides first
-      lbl.classList.remove('label-selected', 'label-dim', 'label-neighbor2');
-      lbl.style.fontSize = '';
-      lbl.style.color = '';
-      lbl.style.background = '';
-      lbl.style.marginLeft = '';
-      lbl.style.padding = '';
-      // Ring visibility
-      const ring = node.__ringMat;
-      if (ring) ring.opacity = 0;
+      const lg = node.__largeGraph;
+      const sph = node.__sphereMat;
+      if (!lbl && !sph) return;
+      // Reset label state if label exists
+      if (lbl) {
+        lbl.classList.remove('label-selected', 'label-dim', 'label-neighbor2');
+        lbl.style.fontSize = '';
+        lbl.style.color = '';
+        lbl.style.background = '';
+        lbl.style.marginLeft = '';
+        lbl.style.padding = '';
+      }
+      // Reset sphere to original color + full opacity
+      const origColor = CLUSTER_COLORS[node.cluster_id % CLUSTER_COLORS.length];
+      if (sph) { sph.color.set(origColor); sph.opacity = 1.0; }
+
       switch (state) {
         case 'hover':
-          lbl.style.opacity = '1';
-          lbl.classList.add('label-selected');
-          if (ring) ring.opacity = 0.5;
+          if (lbl) { lbl.style.opacity = '1'; lbl.classList.add('label-selected'); }
           break;
         case 'selected':
-          lbl.style.opacity = '1';
-          lbl.classList.add('label-selected');
-          if (ring) ring.opacity = 0.8;
+          if (lbl) { lbl.style.opacity = '1'; lbl.classList.add('label-selected'); }
           break;
         case 'sel-neighbor':
-          lbl.style.opacity = '0.7';
+          if (lbl) lbl.style.opacity = '0.7';
+          if (sph) sph.opacity = 0.7;
           break;
         case 'neighbor':
-          lbl.style.opacity = '0.09';
+          if (lbl) lbl.style.opacity = '0.09';
+          if (sph) sph.opacity = 0.15;
           break;
         case 'neighbor2':
-          lbl.style.opacity = '0.35';
-          lbl.classList.add('label-neighbor2');
+          if (lbl) { lbl.style.opacity = '0.35'; lbl.classList.add('label-neighbor2'); }
+          if (sph) sph.opacity = 0.25;
           break;
         case 'sel-rest':
-          lbl.style.opacity = String(VFX.labelAlpha.val * 0.9);
+          if (lbl) lbl.style.opacity = String(VFX.labelAlpha.val * 0.9);
+          if (sph) sph.opacity = 0.08;
           break;
         case 'dim':
-          lbl.style.opacity = String(VFX.dimOpacity.val * 0.3);
-          lbl.classList.add('label-dim');
+          if (lbl) { lbl.style.opacity = String(VFX.dimOpacity.val * 0.3); lbl.classList.add('label-dim'); }
+          if (sph) sph.opacity = 0.08;
           break;
         default:
-          lbl.style.opacity = String(VFX.labelAlpha.val);
+          if (lbl) lbl.style.opacity = String(VFX.labelAlpha.val);
       }
     }
 
@@ -2715,14 +2750,17 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
 
     function refreshPostFx() {
       if (!bloomPass) return;
+      const off = VFX.bloomStrength.val === 0;
       if (bloomModule.type === 'webgpu') {
         bloomPass.strength.value = VFX.bloomStrength.val;
         bloomPass.radius.value = VFX.bloomRadius.val;
         bloomPass.threshold.value = VFX.bloomThreshold.val;
+        if (bloomPass.enabled !== undefined) bloomPass.enabled = !off;
       } else {
         bloomPass.strength = VFX.bloomStrength.val;
         bloomPass.radius = VFX.bloomRadius.val;
         bloomPass.threshold = VFX.bloomThreshold.val;
+        bloomPass.enabled = !off;
       }
     }
 
@@ -3011,6 +3049,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
     // ═══════════════════════════════════════════════
 
     let Graph;
+    // miniGraph removed — using 2D canvas instead to avoid WebGL context leak
     let bloomPass;
     let gpuSim = null;
     let currentLayout = 'central';
@@ -3164,6 +3203,21 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
     function handleNodeHover(node) {
       hoverNode = node || null;
       document.getElementById('graph').style.cursor = node ? 'pointer' : '';
+
+      // Hover info box
+      const hoverBox = document.getElementById('hover-info');
+      if (node && isExternalGraph) {
+        document.getElementById('hover-info-name').textContent = node.name || '';
+        // Just show clean name (without tag:: prefix) and type
+        const cleanName = (node.name || '').replace(/^[^:]+::/, '');
+        document.getElementById('hover-info-name').textContent = cleanName;
+        document.getElementById('hover-info-type').textContent = node._tag || '';
+        document.getElementById('hover-info-detail').textContent = '';
+        hoverBox.classList.add('visible');
+      } else {
+        hoverBox.classList.remove('visible');
+      }
+
       if (Graph) {
         const { neighbors1, neighbors2 } = node
           ? getNeighborDepths(node)
@@ -3176,7 +3230,6 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
             else if (neighbors2.has(n.id))   updateNodeAppearance(n, 'neighbor2');
             else                             updateNodeAppearance(n, 'dim');
           } else if (selectedNode) {
-            // Restore selection view: selected + neighbors highlighted
             const selN1 = neighborSets[selectedNode.id];
             if (n === selectedNode)          updateNodeAppearance(n, 'selected');
             else if (selN1?.has(n.id))       updateNodeAppearance(n, 'sel-neighbor');
@@ -3187,6 +3240,14 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         });
         Graph.linkColor(Graph.linkColor())
              .linkWidth(Graph.linkWidth());
+        // Fade links + particles when hovering
+        if (hoverNode) {
+          Graph.linkOpacity(0.05)
+               .linkDirectionalParticleWidth(0);
+        } else if (!selectedNode) {
+          Graph.linkOpacity(1.0)
+               .linkDirectionalParticleWidth(VFX.particleWidth.val);
+        }
       }
     }
 
@@ -3218,27 +3279,6 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         node,
         1000
       );
-
-      // After animation completes: shift orbit target right so node centers in
-      // the space left of the panel using world-space units per pixel
-      const panelWidth = parseFloat(
-        getComputedStyle(document.documentElement).getPropertyValue('--panel-width') || '360'
-      );
-      setTimeout(() => {
-        if (!Graph || !selectedNode) return;
-        const camera = Graph.camera();
-        const controls = Graph.controls();
-        const fov = camera.fov * Math.PI / 180;
-        const worldPerPx = 2 * distance * Math.tan(fov / 2) / window.innerHeight;
-        const rightShift = (panelWidth / 2) * worldPerPx;
-        const right = new THREE.Vector3();
-        right.crossVectors(
-          camera.getWorldDirection(new THREE.Vector3()),
-          camera.up
-        ).normalize();
-        controls.target.addScaledVector(right, rightShift);
-        controls.update();
-      }, 1300);
     }
 
     function handleBackgroundClick() {
@@ -3313,34 +3353,107 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
             metaHtml += `<div class="info-row"><span class="info-key">ATTRS</span><span class="info-val" style="font-size:10px;word-break:break-all">${escapeHtml(attrNames)}</span></div>`;
           }
         }
-        document.getElementById('card-meta').innerHTML = metaHtml;
-
-        // Show vis.js tooltip properties as preview if available
-        if (node._tooltip) {
-          // Parse HTML-encoded tooltip: "<b>Type</b><br>Key: Value<br>..."
-          const tmp = document.createElement('div');
-          tmp.innerHTML = node._tooltip;
-          const text = tmp.textContent || '';
-          // Skip first two lines (type + ID) since we already show them
-          const propLines = text.split('\n').filter(l => l.includes(':')).slice(2);
-          document.getElementById('card-preview').innerHTML =
-            '<div style="font-size:11px;line-height:1.6;opacity:0.8">'
-            + propLines.map(l => escapeHtml(l.trim())).join('<br>')
-            + '</div>';
-        } else {
-          document.getElementById('card-preview').textContent = '';
-        }
-
-        // Connections with edge type
+        // ── Section 2: Mini-graph (in card-meta) ──
         const edges = adjacency[node.id] || [];
-        let html = `<div class="conn-header">CONNECTIONS (${edges.length})</div>`;
+        const centerColor = CLUSTER_COLORS[node.cluster_id % CLUSTER_COLORS.length];
+        const neighbors = [];
+        const seen = new Set([node.id]);
         edges.forEach(e => {
-          const target = nodeById[e.id];
-          if (!target) return;
-          const targetLabel = (target._tag || '') + '::' + (target.name || '');
-          html += `<div class="conn-item"><div class="conn-edge"><span class="arrow">── </span><span class="label">${escapeHtml(e.label)}</span><span class="arrow"> ──▸</span></div><div class="conn-name" data-node-id="${target.id}">${escapeHtml(targetLabel)}</div></div>`;
+          const t = nodeById[e.id];
+          if (!t || seen.has(t.id)) return;
+          seen.add(t.id);
+          neighbors.push({ node: t, label: e.label, color: CLUSTER_COLORS[t.cluster_id % CLUSTER_COLORS.length] });
         });
-        document.getElementById('card-connections').innerHTML = html;
+        document.getElementById('card-meta').innerHTML =
+          `<div class="conn-header" style="margin-bottom:4px;">CONNECTIONS (${edges.length})</div>`
+          + `<canvas id="mini-graph-canvas" width="600" height="400" style="width:100%;height:200px;"></canvas>`;
+
+        // ── Section 3: Metadata properties (in card-preview + card-connections) ──
+        let propsHtml = '';
+        if (node._tooltip) {
+          // Split by <br> tags first, then extract text from each segment
+          const rawLines = node._tooltip.split(/<br\s*\/?>/i);
+          rawLines.forEach(segment => {
+            const tmp = document.createElement('span');
+            tmp.innerHTML = segment;
+            const line = (tmp.textContent || '').trim();
+            const colonIdx = line.indexOf(':');
+            if (colonIdx < 1) return;
+            const key = line.slice(0, colonIdx).trim();
+            const val = line.slice(colonIdx + 1).trim();
+            const cleanKey = key.replace(/^\w+\./, '').toUpperCase();
+            propsHtml += `<div style="margin-bottom:12px;"><div style="font-family:var(--mono);font-size:9px;letter-spacing:0.08em;color:var(--text-dim);">${escapeHtml(cleanKey)}</div><div style="font-family:var(--mono);font-size:11px;color:var(--text);word-break:break-all;margin-top:2px;">${escapeHtml(val || 'na')}</div></div>`;
+          });
+        }
+        document.getElementById('card-preview').innerHTML = propsHtml
+          ? `<div style="border-top:1px solid var(--border);padding-top:10px;margin-top:8px;"><div class="conn-header" style="margin-bottom:8px;">PROPERTIES</div>${propsHtml}</div>`
+          : '';
+        document.getElementById('card-connections').innerHTML = '';
+
+        // Draw 2D mini-graph preserving original geometry
+        setTimeout(() => {
+          const cvs = document.getElementById('mini-graph-canvas');
+          if (!cvs || !Graph) return;
+          const ctx = cvs.getContext('2d');
+          const W = cvs.width, H = cvs.height;
+          const pad = 40;
+
+          // Get real 3D positions projected to 2D via the main graph's camera
+          const allPts = [{ x: node.x, y: node.y, z: node.z }];
+          neighbors.forEach(nb => allPts.push({ x: nb.node.x, y: nb.node.y, z: nb.node.z }));
+          const projected = allPts.map(p => Graph.graph2ScreenCoords(p.x, p.y, p.z));
+
+          // Normalize to canvas space
+          let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+          projected.forEach(p => {
+            if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+            if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+          });
+          const rangeX = maxX - minX || 1, rangeY = maxY - minY || 1;
+          const scale = Math.min((W - pad * 2) / rangeX, (H - pad * 2) / rangeY);
+          const offX = (W - rangeX * scale) / 2, offY = (H - rangeY * scale) / 2;
+          const toCanvas = (p) => ({
+            x: offX + (p.x - minX) * scale,
+            y: offY + (p.y - minY) * scale,
+          });
+
+          const centerPt = toCanvas(projected[0]);
+          const nPos = neighbors.map((nb, i) => ({ ...toCanvas(projected[i + 1]), ...nb }));
+
+          ctx.clearRect(0, 0, W, H);
+
+          // Draw edges
+          ctx.lineWidth = 1;
+          ctx.strokeStyle = 'rgba(150,150,150,0.3)';
+          nPos.forEach(np => {
+            ctx.beginPath();
+            ctx.moveTo(centerPt.x, centerPt.y);
+            ctx.lineTo(np.x, np.y);
+            ctx.stroke();
+          });
+
+          // Draw neighbor nodes
+          nPos.forEach(np => {
+            ctx.beginPath();
+            ctx.arc(np.x, np.y, 5, 0, Math.PI * 2);
+            ctx.fillStyle = np.color;
+            ctx.fill();
+            ctx.fillStyle = 'rgba(150,150,150,0.8)';
+            ctx.font = '9px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText((np.node.name || '').slice(0, 14), np.x, np.y + 15);
+          });
+
+          // Draw center node (larger)
+          ctx.beginPath();
+          ctx.arc(centerPt.x, centerPt.y, 8, 0, Math.PI * 2);
+          ctx.fillStyle = centerColor;
+          ctx.fill();
+          ctx.fillStyle = 'rgba(255,255,255,0.9)';
+          ctx.font = 'bold 10px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText((node.name || '').slice(0, 18), centerPt.x, centerPt.y - 14);
+        }, 30);
 
       } else {
         // Notes pipeline detail card
@@ -3367,9 +3480,14 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         document.getElementById('card-connections').innerHTML = html;
       }
 
-      card.classList.add('visible');
       resize.style.display = 'block';
-      updateResizePosition();
+      card.classList.add('visible');
+      // Resize graph to fit remaining space
+      if (Graph) {
+        const pw = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--panel-width') || '360');
+        const gw = window.innerWidth - pw - 5; // 5 for resize handle
+        Graph.width(gw).height(window.innerHeight);
+      }
     }
 
     function hideDetailCard() {
@@ -3378,23 +3496,17 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       selectedNode = null;
       // Clear selection highlighting
       if (Graph) {
-        // updateNodeAppearance('normal') already clears all state classes
         Graph.graphData().nodes.forEach(n => updateNodeAppearance(n, 'normal'));
         Graph.linkOpacity(1.0);
         Graph.linkColor(Graph.linkColor())
              .linkWidth(Graph.linkWidth())
              .linkDirectionalParticles(VFX.particleCount.val);
+        // Restore graph to full width
+        Graph.width(window.innerWidth).height(window.innerHeight);
       }
     }
 
     // ── Panel resize ──
-
-    function updateResizePosition() {
-      const card = document.getElementById('detail-card');
-      const resize = document.getElementById('panel-resize');
-      const width = card.getBoundingClientRect().width;
-      resize.style.right = (width - 2) + 'px';
-    }
 
     (function initPanelResize() {
       const resize = document.getElementById('panel-resize');
@@ -3412,7 +3524,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
           const delta = startX - e.clientX;
           const newWidth = Math.max(280, Math.min(startWidth + delta, window.innerWidth * 0.6));
           document.documentElement.style.setProperty('--panel-width', newWidth + 'px');
-          resize.style.right = (newWidth - 2) + 'px';
+          if (Graph) Graph.width(window.innerWidth - newWidth - 5).height(window.innerHeight);
         }
 
         function onUp() {
@@ -3896,15 +4008,38 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       css2d.domElement.style.pointerEvents = 'none';
       graphEl.appendChild(css2d.domElement);
 
-      // Render CSS2D labels on every frame
+      // Render CSS2D labels with culling for medium graphs
+      // Large external graphs (>1000 nodes) have labels hidden by default;
+      // visibility is managed by updateNodeAppearance — skip culling entirely.
+      const _labelsHiddenByDefault = isExternalGraph;
+      let _labelFrame = 0;
       (function renderLabels() {
-        if (Graph) css2d.render(Graph.scene(), Graph.camera());
+        if (Graph) {
+          if (!_labelsHiddenByDefault && ++_labelFrame % 3 === 0) {
+            const nodes = Graph.graphData().nodes;
+            const graphEl = document.getElementById('graph');
+            const w = graphEl.clientWidth, h = graphEl.clientHeight;
+            const tooMany = nodes.length > 500;
+            if (tooMany) {
+              nodes.forEach(n => {
+                if (!n.__labelDiv) return;
+                const sc = Graph.graph2ScreenCoords(n.x, n.y, n.z);
+                const inView = sc.x > -200 && sc.x < w + 200 && sc.y > -200 && sc.y < h + 200;
+                n.__labelDiv.style.display = inView ? '' : 'none';
+              });
+            }
+          }
+          css2d.render(Graph.scene(), Graph.camera());
+        }
         requestAnimationFrame(renderLabels);
       })();
 
       // Resize graph + CSS2D overlay when window changes
       window.addEventListener('resize', () => {
-        const w = window.innerWidth, h = window.innerHeight;
+        const h = window.innerHeight;
+        const panelOpen = document.getElementById('detail-card').classList.contains('visible');
+        const pw = panelOpen ? parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--panel-width') || '360') + 5 : 0;
+        const w = window.innerWidth - pw;
         Graph.width(w).height(h);
         css2d.setSize(w, h);
       });
@@ -4129,9 +4264,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       clusterLabelRAF = requestAnimationFrame(updateClusterLabelPositions);
     }
 
+    let _clusterFrame = 0;
     function updateClusterLabelPositions() {
       clusterLabelRAF = requestAnimationFrame(updateClusterLabelPositions);
       if (!Graph) return;
+      // Throttle to every 5th frame
+      if (++_clusterFrame % 5 !== 0) return;
       const show = currentLayout === 'decentral';
       const nodes = Graph.graphData().nodes;
 
@@ -4256,7 +4394,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       { id:'palm',  icon:'✋', verb:'ROTAR',    desc:'Mueve tu mano frente a la cámara de lado a lado. El grafo 3D girará siguiendo tu mano.' },
       { id:'point', icon:'☝️', verb:'EXPLORAR', desc:'Extiende solo el dedo índice (los demás cerrados) y apunta hacia un nodo. Mantén el dedo apuntando sobre el nodo hasta que se seleccione.' },
       { id:'zoom',  icon:'🤲', verb:'ZOOM',     desc:'Levanta ambas manos frente a la cámara. Acerca las manos para hacer zoom in, o aléjalas para zoom out.' },
-      { id:'fist',  icon:'✊', verb:'RESET',    desc:'Cierra el puño completamente (todos los dedos cerrados) y sostenlo por 1 segundo para reiniciar la vista de la cámara.' },
+      { id:'peace', icon:'✌️', verb:'RESET',    desc:'Extiende el índice y medio (gesto de paz/victoria) y sostenlo para reiniciar la vista de la cámara.' },
     ];
 
     // SVG hand illustrations for each onboarding step
@@ -4448,6 +4586,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       setTimeout(() => {
         ob.classList.add('hidden');
         if (ObGraph) { if (ObGraph._destructor) ObGraph._destructor(); ObGraph = null; }
+        // Reveal the real graph now that onboarding is done
+        document.getElementById('graph').style.visibility = 'visible';
         ht_camR = SCALE * 2.5; ht_camPhi = 0; ht_camTheta = Math.PI / 2;
         ht_updateCamera();
         appState = 'ready';
@@ -4569,9 +4709,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         return;
       }
 
-      // ── Step 3 — fist: hold 1s ───────────────────────────────────────
+      // ── Step 3 — peace: hold to reset ─────────────────────────────────
       if (obStep === 3) {
-        if (gesture === 'fist') {
+        if (gesture === 'peace') {
           ob_fistFrames++;
           const pct = Math.min(1, ob_fistFrames / OB_FIST_FRAMES);
           fbEl.textContent = 'RESET [' + Math.round(pct * 100) + '%]';
@@ -4595,11 +4735,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let ht_pointFrames = 0;
     let ht_fistFrames  = 0;
     let ht_noHandFrames = 0;
-    let ht_candidateNode   = null;  // node being considered for hover change
-    let ht_candidateFrames = 0;     // consecutive frames with that candidate
-    const HT_CLICK_FRAMES   = 45;   // hold 0.75s to select
-    const HT_FIST_FRAMES    = 30;   // hold 1s to reset
-    const HT_HOVER_FRAMES   = 4;    // consecutive frames needed to commit hover change
+    let ht_candidateNode   = null;
+    let ht_candidateFrames = 0;
+    let ht_pointPrevFx = null;
+    let ht_pointPrevFy = null;
+    const HT_STILL_POINT = 0.012;   // finger stillness threshold for click accumulation
+    const HT_CLICK_FRAMES   = 5;    // hold ~80ms to select (3x faster)
+    const HT_FIST_FRAMES    = 6;    // hold ~100ms to reset (3x faster)
+    const HT_HOVER_FRAMES   = 6;    // consecutive frames needed to commit hover change
     const HT_RELEASE_FRAMES = 120;  // 2s without hand → re-enable mouse
     let ht_zoomCooldown     = 0;    // frames to ignore after zoom ends
     const HT_ZOOM_COOLDOWN  = 10;   // ~330ms grace period after zoom
@@ -4619,14 +4762,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     // Fix 2 — Hysteresis for finger extension detection
     const ht_extendedState = [false, false, false, false];
-    const HT_EXTEND_MARGIN = 0.015;
+    const HT_EXTEND_MARGIN = 0.025;
 
     // Fix 3 — Gesture lock + debounce
     let ht_lastGesture = 'other';
     let ht_pendGesture = 'other';
     let ht_pendFrames  = 0;
     let ht_lockFrames  = 0;
-    const HT_GESTURE_DEBOUNCE = 3;
+    const HT_GESTURE_DEBOUNCE = 2;
     const HT_GESTURE_LOCK = 8;
     // Onboarding parallel debounce state
     let ob_lastGesture = 'other';
@@ -4639,7 +4782,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let ob_wasTwoHands = false;
 
     // Fix 5 — EMA smoothing of landmarks
-    const HT_EMA_ALPHA = 0.65;
+    const HT_EMA_ALPHA = 0.45;
     let ht_emaState = { lm: null };
     let ob_emaState = { lm: null };
 
@@ -4699,6 +4842,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const n    = [idx, mid, ring, pink].filter(Boolean).length;
       if (n === 0)                        return 'fist';
       if (idx && !mid && !ring && !pink)  return 'point';
+      if (idx && mid && !ring && !pink)   return 'peace';
       if (n >= 3)                         return 'palm';
       return 'other';
     }
@@ -4766,7 +4910,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         const d  = Math.hypot(sc.x - sx, sc.y - sy);
         if (d < bestD) { bestD = d; best = n; }
       });
-      return bestD < 80 ? best : null;
+      return bestD < 100 ? best : null;
     }
 
     function ht_setLabel(text) {
@@ -4779,6 +4923,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const canvas = document.getElementById('ht-canvas');
       const ctx    = canvas.getContext('2d');
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // Draw camera feed as background so user can see if hands are in frame
+      const video = document.getElementById('ht-video');
+      if (video.readyState >= 2) ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
       const hands = results.multiHandLandmarks || [];
 
@@ -4827,9 +4974,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           ob_zoomCooldown--;
           return;
         }
+        // Draw skeleton for all detected hands
+        hands.forEach(h => ht_drawSkeleton(h));
         const rawLm   = hands[0];
         const lm      = ht_smoothLandmarks(rawLm, ob_emaState);
-        ht_drawSkeleton(lm);
         const rawGesture = ht_gesture(lm);
         const gesture    = ob_debouncedGesture(rawGesture);
         const px = 1 - lm[9].x;
@@ -4855,6 +5003,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         ht_candidateFrames = 0;
         ht_wasTwoHands     = true;
         ht_lastGesture = 'other'; ht_pendGesture = 'other'; ht_pendFrames = 0; ht_lockFrames = 0;
+        ht_drawSkeleton(hands[0]);
+        ht_drawSkeleton(hands[1]);
         ht_setLabel('ZOOM');
         return;
       }
@@ -4893,53 +5043,40 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
         const fx = 1 - lm[8].x;
         const fy = lm[8].y;
-        let nearest = ht_nearestNode(fx, fy);
 
-        // Auto-select when entering point with no hover: pick the most camera-forward
-        // node within a central screen region (smallest NDC z = closest to viewer)
-        if (!nearest && ht_hoverNode === null && Graph) {
-          const cx = window.innerWidth / 2;
-          const cy = window.innerHeight / 2;
-          const radius = Math.min(window.innerWidth, window.innerHeight) * 0.4;
-          const camera = Graph.camera();
-          let bestZ = Infinity, bestN = null;
-          Graph.graphData().nodes.forEach(n => {
-            const sc = Graph.graph2ScreenCoords(n.x, n.y, n.z);
-            if (Math.hypot(sc.x - cx, sc.y - cy) < radius) {
-              const v = new THREE.Vector3(n.x, n.y, n.z).project(camera);
-              if (v.z < bestZ) { bestZ = v.z; bestN = n; }
-            }
-          });
-          if (bestN) nearest = bestN;
+        if (!Graph) return;
+
+        // Direct finger→screen mapping: find nearest node to finger position
+        const nearest = ht_nearestNode(fx, fy);
+
+        // Check if finger is still (for click accumulation)
+        const dx = ht_pointPrevFx !== null ? fx - ht_pointPrevFx : 0;
+        const dy = ht_pointPrevFy !== null ? fy - ht_pointPrevFy : 0;
+        const delta = Math.hypot(dx, dy);
+        ht_pointPrevFx = fx;
+        ht_pointPrevFy = fy;
+
+        // If finger moved, update hover to nearest node
+        if (delta > HT_STILL_POINT || nearest !== ht_hoverNode) {
+          if (nearest && nearest !== ht_hoverNode) {
+            ht_hoverNode = nearest;
+            ht_pointFrames = 0;
+            handleNodeHover(nearest);
+          }
         }
 
-        if (nearest === ht_hoverNode) {
-          ht_candidateNode   = null;
-          ht_candidateFrames = 0;
-          if (nearest) {
-            ht_pointFrames++;
-            const pct = Math.min(1, ht_pointFrames / HT_CLICK_FRAMES);
-            if (ht_pointFrames >= HT_CLICK_FRAMES) {
-              if (Graph) handleNodeClick(nearest);
-              ht_pointFrames = 0;
-            }
-            ht_setLabel(`→ ${nearest.name.slice(0, 18)} [${Math.round(pct * 100)}%]`);
-            return;
+        // If hovering and finger is still, accumulate click
+        if (ht_hoverNode && delta <= HT_STILL_POINT) {
+          ht_pointFrames++;
+          const pct = Math.min(1, ht_pointFrames / HT_CLICK_FRAMES);
+          if (ht_pointFrames >= HT_CLICK_FRAMES) {
+            handleNodeClick(ht_hoverNode);
+            ht_pointFrames = 0;
           }
+          ht_setLabel(`→ ${ht_hoverNode.name.slice(0, 18)} [${Math.round(pct * 100)}%]`);
+          return;
         } else {
-          if (nearest === ht_candidateNode) {
-            ht_candidateFrames++;
-          } else {
-            ht_candidateNode   = nearest;
-            ht_candidateFrames = 1;
-          }
-          if (ht_candidateFrames >= HT_HOVER_FRAMES) {
-            ht_hoverNode       = nearest;
-            ht_pointFrames     = 0;
-            ht_candidateNode   = null;
-            ht_candidateFrames = 0;
-            if (Graph) handleNodeHover(nearest);
-          }
+          ht_pointFrames = 0;
         }
 
         ht_setLabel(ht_hoverNode ? `→ ${ht_hoverNode.name.slice(0, 20)}` : 'POINT');
@@ -4949,9 +5086,16 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       ht_pointFrames     = 0;
       ht_candidateNode   = null;
       ht_candidateFrames = 0;
+      ht_pointPrevFx     = null;
+      ht_pointPrevFy     = null;
+      // Reset hover state when leaving point gesture
+      if (ht_hoverNode) {
+        ht_hoverNode = null;
+        if (Graph) handleNodeHover(null);
+      }
 
-      // ── Fist → check still vs moving ──────────────────────────────────────
-      if (gesture === 'fist') {
+      // ── Peace (2 fingers) → reset view ────────────────────────────────────
+      if (gesture === 'peace') {
         const fistDelta = (ht_fistPrevX !== null)
           ? Math.abs(px - ht_fistPrevX) + Math.abs(py - ht_fistPrevY)
           : 1; // first frame: treat as moving
@@ -4975,9 +5119,20 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
             ht_fistFrames = 0;
             ht_fistStillFrames = 0;
             ht_hoverNode  = null;
-            ht_camR = SCALE * 2.5; ht_camPhi = 0; ht_camTheta = Math.PI / 2;
-            ht_updateCamera();
-            if (Graph) handleNodeHover(null);
+            if (Graph) {
+              // Zoom to fit entire graph with 100px padding, 1s animation
+              Graph.zoomToFit(2500, 80);
+              handleNodeHover(null);
+            }
+            // Sync spherical coords after zoomToFit finishes
+            setTimeout(() => {
+              if (!Graph) return;
+              const cam = Graph.camera();
+              const pos = cam.position;
+              ht_camR = Math.hypot(pos.x, pos.y, pos.z);
+              ht_camPhi = Math.atan2(pos.x, pos.z);
+              ht_camTheta = Math.acos(pos.y / ht_camR);
+            }, 2600);
             if (typeof hideDetailCard === 'function') hideDetailCard();
             ht_setLabel('RESET');
           }
@@ -5032,8 +5187,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       mpHands.setOptions({
         maxNumHands: 2,
         modelComplexity: 1,
-        minDetectionConfidence: 0.7,
-        minTrackingConfidence: 0.5
+        minDetectionConfidence: 0.8,
+        minTrackingConfidence: 0.6
       });
 
       // Crop metadata for the current frame — used to remap landmarks
@@ -5072,7 +5227,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           (wrist.x - elbow.x) * CAM_W,
           (wrist.y - elbow.y) * CAM_H
         );
-        const side = Math.max(64, armLen * 2.0);
+        const side = Math.max(64, armLen * 1.4);
         const cx = wrist.x * CAM_W;
         const cy = wrist.y * CAM_H;
         // Clamp to frame bounds
@@ -5180,6 +5335,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     const _htObserver = new MutationObserver(() => {
       if (document.getElementById('setup').classList.contains('hidden')) {
         _htObserver.disconnect();
+        // Hide real graph during onboarding so it doesn't bleed through
+        document.getElementById('graph').style.visibility = 'hidden';
         // Sync spherical coords with initial camera position
         ht_camR = SCALE * 2.5; ht_camPhi = 0; ht_camTheta = Math.PI / 2;
         ht_init();
@@ -5231,7 +5388,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   <div id="ht-container">
     <canvas id="ht-canvas" width="320" height="180"></canvas>
     <div id="ht-gesture-label">WAITING FOR CAMERA...</div>
-    <div id="ht-hint">PALM → ROTATE<br>POINT → SELECT (HOLD)<br>FIST → RESET<br>2 HANDS → ZOOM</div>
+    <div id="ht-hint">PALM → ROTATE<br>POINT → SELECT (HOLD)<br>PEACE ✌️ → RESET<br>2 HANDS → ZOOM</div>
   </div>
 
 </body>

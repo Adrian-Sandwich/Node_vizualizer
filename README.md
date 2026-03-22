@@ -1,74 +1,141 @@
-# Topologies of Ideas
+# Graph Visualizer
 
-A 3D force-directed graph that visualizes your Obsidian notes as an interactive network of ideas. Notes are embedded using the Gemini API, clustered by semantic similarity, and rendered as a navigable 3D space.
+A 3D force-directed graph that visualizes knowledge graphs and Obsidian notes as an interactive network. Navigate the graph with hand gestures using your webcam — no mouse or controller needed.
 
-Fully standalone — single HTML file, no build step, no server. Runs entirely in the browser.
+Fully standalone — single HTML file, no build step, no npm. Runs entirely in the browser.
 
 ## Files
 
 ```
-topologies-of-ideas-v1/
-  app.html   — the complete app (open in any browser)
+Node_visualizer/
+  app.html                              — the complete app
+  kg_nebula_bfs_3500_*.html             — sample external graph (3500 nodes)
+  notas-cdmx/                           — sample Obsidian notes dataset
   README.md
   LICENSE
 ```
 
-## Quick Start
+## Quick Start (local machine)
 
-1. Open `app.html` in a modern browser
-2. Paste your Gemini API key (get one free at https://aistudio.google.com/apikey)
-3. Click **SELECT NOTES FOLDER** and pick your Obsidian vault (or any folder of `.md` files)
-4. Wait for the pipeline to embed, cluster, and render your notes
+1. Open `app.html` in **Google Chrome**
+2. Two modes:
+   - **Notes mode**: Paste a Gemini API key → Select a folder of `.md` files
+   - **External graph mode**: Click **LOAD EXTERNAL GRAPH** → Pick an HTML graph file (like `kg_nebula_bfs_3500_*.html`)
 
-On return visits, click **RESUME PREVIOUS SESSION** to instantly restore your last analysis from the browser cache.
+## Remote Setup (SSH tunnel)
 
-## Features
+If the app runs on a remote server (e.g. a GPU machine) and you want to use your **local webcam** for hand tracking, you need an SSH tunnel. The browser requires `localhost` to access the camera (`getUserMedia`).
 
-- **3D force-directed graph** — notes as labeled nodes, semantic connections as edges
-- **AI-powered clustering** — automatic grouping via UMAP dimensionality reduction + k-means, with Gemini-generated cluster names
-- **Three topology views** — switch between Centralized, Decentralized, and Distributed network layouts
-- **Interactive exploration** — click nodes to open a side panel with note preview and connections
-- **Edge hover** — hover links to see AI-generated relationship labels between notes
-- **Color themes** — switch between Warm and Grey palettes
-- **IndexedDB caching** — analysis results persist across sessions so you don't re-run the pipeline every visit
-- **Keyboard shortcuts** — press `H` to recenter the camera
+### Prerequisites on the server
 
-## Hand Tracking Navigation
+- **Python 3** (pre-installed on most Linux)
+- No other dependencies — everything loads from CDN
 
-The app includes a hands-free navigation mode powered by MediaPipe Hands — no controller needed, just your webcam.
+### Step 1: Start the server on the remote machine
+
+```bash
+ssh user@192.168.168.97
+
+cd /path/to/Node_visualizer
+
+# Serve with no-cache headers (recommended during development)
+python3 -c "
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+class H(SimpleHTTPRequestHandler):
+    def end_headers(self):
+        self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+        super().end_headers()
+HTTPServer(('0.0.0.0', 9090), H).serve_forever()
+"
+
+# Or simply:
+# python3 -m http.server 9090 --bind 0.0.0.0
+```
+
+### Step 2: Create SSH tunnel from your local machine
+
+```bash
+ssh -L 9090:localhost:9090 user@192.168.168.97
+```
+
+This forwards your local port 9090 to the server's port 9090.
+
+### Step 3: Open in your local browser
+
+```
+http://localhost:9090/app.html
+```
+
+Your local webcam will work because the browser sees `localhost` (secure context).
+
+> **Note:** Do NOT use the server's IP directly (e.g. `http://192.168.168.97:9090`) — the camera and some browser APIs require HTTPS or localhost.
+
+## Hand Tracking Gestures
 
 | Gesture | Action |
 |---|---|
 | **Palm** (open hand) | Orbit / rotate the graph |
-| **Point** (index finger extended) | Hover over nodes; aim at a node and hold to select |
-| **Two hands** (both open) | Pinch / spread to zoom |
-| **Fist** | Reset camera to default position |
+| **Point** (index finger) | Navigate nodes — move finger to switch between nodes, hold still to select |
+| **Peace** ✌️ (index + middle) | Reset camera — zooms to fit the entire graph |
+| **Two hands** | Pinch / spread to zoom |
 
-When you first raise your index finger, the nearest node to the screen center is automatically highlighted so navigation starts immediately without having to aim precisely.
+The camera preview (bottom-left) shows the video feed with hand skeleton overlay so you can verify your hands are in frame.
 
-Hand tracking activates automatically once the graph is loaded and your webcam is available.
+## Features
 
-## Example Notes
+### Graph Modes
 
-The `notas-cdmx/` folder contains a sample dataset about the socioeconomic distribution of Mexico City — a good way to see the graph in action without needing your own notes.
+- **Notes pipeline** — reads `.md`/`.txt` files, embeds with Gemini API, clusters by semantic similarity, renders as 3D network with AI-generated labels
+- **External graph import** — loads HTML files with embedded graph data (vis.js format), renders nodes as colored spheres by category
+
+### Visualization
+
+- **3D force-directed layout** — nodes positioned by d3-force simulation
+- **Colored spheres by cluster** — each category/domain gets a distinct color
+- **Interactive detail panel** — select a node to see its properties, mini connection graph, and metadata
+- **Hover info box** — shows node name and type while pointing
+- **Two color themes** — switch between Warm and Minimal palettes
+- **Bloom post-processing** — configurable via the settings panel
+
+### Performance Optimizations
+
+- No CSS2D labels for external graphs (only colored spheres) — handles 3500+ nodes smoothly
+- Shared geometry for node meshes
+- Label visibility culling for medium graphs (500+ nodes)
+- Throttled cluster label updates
+- Bloom pass disabled when strength = 0
+
+### Other
+
+- **IndexedDB caching** — analysis results persist across sessions
+- **Onboarding tutorial** — guided hand gesture tutorial on first load
+- **Keyboard shortcut** — press `H` to recenter the camera
+- **Resizable detail panel** — drag the panel edge to resize
 
 ## Requirements
 
-- **Google Chrome** (or Chromium-based browsers like Edge) — required for the File System Access API that reads your notes folder. Firefox and Safari do not support this API.
-- A Gemini API key (free tier works fine)
-- A folder of Markdown notes (`.md` files)
+- **Google Chrome** (or Chromium-based: Edge, Brave, Arc) — required for File System Access API and WebGL
+- **Webcam** — for hand tracking (optional, mouse navigation also works)
+- **Gemini API key** — only needed for Notes mode (free at https://aistudio.google.com/apikey)
 
-## How It Works
+## How the Notes Pipeline Works
 
 1. **Scanning** — reads all `.md` files from the selected folder
 2. **Embedding** — sends note text to Gemini's `gemini-embedding-001` model
-3. **Dimensionality reduction** — projects high-dimensional embeddings into 3D via UMAP
+3. **Dimensionality reduction** — projects embeddings into 3D via UMAP
 4. **Clustering** — groups notes by semantic similarity using k-means
 5. **LLM annotation** — Gemini names each cluster and labels edge relationships
 6. **Rendering** — displays the network as an interactive 3D force-directed graph
 
-All processing happens client-side. Your notes are sent only to the Gemini API for embedding and annotation — nothing is stored on any server.
+All processing happens client-side. Your notes are sent only to the Gemini API for embedding — nothing is stored on any server.
 
-## Browser Support
+## Troubleshooting
 
-Requires WebGL and the File System Access API. Use Google Chrome or a Chromium-based browser (Edge, Brave, Arc, etc.).
+| Problem | Solution |
+|---|---|
+| Camera not working | Make sure you're on `localhost`, not the server IP |
+| `getUserMedia` error | Use SSH tunnel (see Remote Setup above) |
+| WebGL context lost | Close other tabs using WebGL, reload the page |
+| Port already in use | Kill existing server: `lsof -ti:9090 \| xargs kill` |
+| Stale cache | Add `?v=N` to URL or use the no-cache server script above |
+| Hand tracking unreliable at distance | Move closer to camera, ensure good lighting, avoid busy backgrounds |
