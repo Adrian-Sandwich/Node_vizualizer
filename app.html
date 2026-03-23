@@ -1348,20 +1348,28 @@
       const rawEdges = extractArray('edges');
       if (!rawNodes.length) throw new Error('No nodes found in vis.js DataSet');
 
-      // Build domain colors from unique groups
+      // Build domain colors from unique groups, preferring node's own color
       const groupSet = new Set(rawNodes.map(n => n.group || 'Unknown'));
-      // Default palette for auto-assignment
       const palette = [
         '#42A5F5','#66BB6A','#FFA726','#EF5350','#AB47BC',
         '#26C6DA','#9CCC65','#78909C','#EC407A','#8D6E63',
         '#FF7043','#7C4DFF','#FFD54F','#4DB6AC','#F06292',
         '#AED581','#4FC3F7','#BA68C8','#FFB74D','#A1887F'
       ];
+      // Extract actual colors from nodes when available
+      const groupColorFromNodes = {};
+      rawNodes.forEach(n => {
+        const g = n.group || 'Unknown';
+        if (!groupColorFromNodes[g]) {
+          const bg = typeof n.color === 'object' && n.color?.background;
+          if (bg) groupColorFromNodes[g] = bg;
+        }
+      });
       const DOMAIN_COLORS = {};
       const DOMAIN_LABELS = {};
       let ci = 0;
       groupSet.forEach(g => {
-        DOMAIN_COLORS[g] = palette[ci % palette.length];
+        DOMAIN_COLORS[g] = groupColorFromNodes[g] || palette[ci % palette.length];
         DOMAIN_LABELS[g] = g;
         ci++;
       });
@@ -1432,6 +1440,7 @@
         _domain: n._domain || 'default',
         _vid: n._vid || n.id,
         _tooltip: n._tooltip || '',
+        _rawProps: n,
         cluster_id: domainToClusterId[n._domain] ?? domainToClusterId['default'] ?? 0,
         cluster_name: (DOMAIN_LABELS && DOMAIN_LABELS[n._domain]) || n._domain || '',
         text_preview: '',
@@ -3384,6 +3393,30 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
             const cleanKey = key.replace(/^\w+\./, '').toUpperCase();
             propsHtml += `<div style="margin-bottom:12px;"><div style="font-family:var(--mono);font-size:9px;letter-spacing:0.08em;color:var(--text-dim);">${escapeHtml(cleanKey)}</div><div style="font-family:var(--mono);font-size:11px;color:var(--text);word-break:break-all;margin-top:2px;">${escapeHtml(val || 'na')}</div></div>`;
           });
+        } else if (node._rawProps) {
+          // No tooltip — show actual node properties from the raw data
+          const raw = node._rawProps;
+          const skip = new Set(['shape', 'color', 'font', 'borderWidth', 'highlight', 'hover']);
+          const propRow = (key, val) => `<div style="margin-bottom:12px;"><div style="font-family:var(--mono);font-size:9px;letter-spacing:0.08em;color:var(--text-dim);">${escapeHtml(key)}</div><div style="font-family:var(--mono);font-size:11px;color:var(--text);word-break:break-all;margin-top:2px;">${escapeHtml(String(val))}</div></div>`;
+          Object.keys(raw).forEach(key => {
+            if (skip.has(key)) return;
+            const val = raw[key];
+            if (val == null || typeof val === 'object') return;
+            propsHtml += propRow(key.replace(/^_/, '').toUpperCase(), val);
+          });
+
+          // Show connected edge types summary
+          const edgeTypeCounts = {};
+          edges.forEach(e => {
+            const t = e.label || 'UNKNOWN';
+            edgeTypeCounts[t] = (edgeTypeCounts[t] || 0) + 1;
+          });
+          if (Object.keys(edgeTypeCounts).length) {
+            propsHtml += `<div style="margin-bottom:8px;margin-top:16px;"><div style="font-family:var(--mono);font-size:9px;letter-spacing:0.08em;color:var(--text-dim);">EDGE TYPES</div></div>`;
+            Object.entries(edgeTypeCounts).forEach(([type, count]) => {
+              propsHtml += `<div style="margin-bottom:4px;display:flex;justify-content:space-between;"><span style="font-family:var(--mono);font-size:11px;color:var(--text);">${escapeHtml(type)}</span><span style="font-family:var(--mono);font-size:10px;color:var(--text-dim);">${count}</span></div>`;
+            });
+          }
         }
         document.getElementById('card-preview').innerHTML = propsHtml
           ? `<div style="border-top:1px solid var(--border);padding-top:10px;margin-top:8px;"><div class="conn-header" style="margin-bottom:8px;">PROPERTIES</div>${propsHtml}</div>`
