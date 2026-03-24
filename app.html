@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en" style="color-scheme: dark;">
+<html lang="en" style="color-scheme: light;">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#0a0a0f">
+  <meta name="theme-color" content="#ffffff">
   <title>Graph Visualizer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -11,24 +11,25 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/pose.js" crossorigin="anonymous"></script>
   <style>
     /* ═══════════════════════════════════════════════
        CSS Custom Properties
        ═══════════════════════════════════════════════ */
     :root {
-      --bg: #0a0a0f;
-      --bg-panel: rgba(8, 8, 7, 0.88);
-      --border: #cd6d13;
-      --text: #e8cea6;
-      --text-dim: #cd8218;
-      --text-bright: #ffeab8;
+      --bg: #ffffff;
+      --bg-panel: rgba(245, 245, 245, 0.92);
+      --border: #d0d0d0;
+      --text: #333333;
+      --text-dim: #888888;
+      --text-bright: #111111;
       --mono: 'JetBrains Mono', monospace;
       --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-      --blue: #d07b1b;
-      --cyan: #d4a843;
-      --light-cyan: #e8c46a;
-      --indigo: #c47a43;
-      --amber: #d4a843;
+      --blue: #555555;
+      --cyan: #666666;
+      --light-cyan: #444444;
+      --indigo: #555555;
+      --amber: #666666;
     }
 
     /* ═══════════════════════════════════════════════
@@ -76,7 +77,7 @@
       text-align: center; font-family: var(--mono);
       display: flex; flex-direction: column; align-items: center; gap: 10px;
       pointer-events: none;
-      background: rgba(10,10,15,0.7); padding: 24px 48px; border: 1px solid var(--border);
+      background: rgba(255,255,255,0.85); padding: 24px 48px; border: 1px solid var(--border);
       transition: opacity 0.4s ease;
     }
     #ob-step-counter { font-size: 12px; color: var(--text-dim); letter-spacing: .1em; }
@@ -116,7 +117,7 @@
     }
     .ob-dot {
       width: 8px; height: 8px; border-radius: 50%;
-      background: rgba(205,109,19,0.3); transition: background .3s;
+      background: rgba(180,180,180,0.4); transition: background .3s;
     }
     .ob-dot--active  { background: var(--border); }
     .ob-dot--done    { background: #4caf50; }
@@ -125,7 +126,7 @@
       position: absolute; bottom: 36px; right: 48px; z-index: 70;
       font-family: var(--mono); font-size: 13px; font-weight: 600;
       letter-spacing: .08em; color: var(--text-dim);
-      background: rgba(10,10,15,0.6); border: 1px solid var(--border);
+      background: rgba(255,255,255,0.7); border: 1px solid var(--border);
       padding: 10px 28px; cursor: pointer;
       transition: color 0.2s, border-color 0.2s;
     }
@@ -211,6 +212,35 @@
 
     #pick-folder-btn:hover {
       border-color: var(--blue);
+      color: var(--text-bright);
+    }
+
+    #setup-divider {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      color: var(--text-dim);
+      margin: 8px 0;
+      opacity: 0.5;
+    }
+
+    #load-graph-btn {
+      background: transparent;
+      border: 1px solid var(--cyan);
+      border-radius: 0;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 12px;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      padding: 10px 24px;
+      width: 320px;
+      box-sizing: border-box;
+      cursor: pointer;
+      transition: border-color 200ms ease, color 200ms ease;
+    }
+    #load-graph-btn:hover {
+      border-color: var(--text-bright);
       color: var(--text-bright);
     }
 
@@ -399,7 +429,7 @@
       z-index: 20;
       width: 200px;
       border: 1px solid var(--border);
-      background: rgba(0,0,0,0.5);
+      background: rgba(245,245,245,0.9);
     }
     #ht-video  { display: none; }
     #ht-canvas {
@@ -698,11 +728,11 @@
 
     /* -- Markers (medoid, LLM center) -- */
     .marker.medoid {
-      color: #ef4444;
+      color: #222222;
     }
 
     .marker.llm-center {
-      color: #fb923c;
+      color: #666666;
     }
 
     /* -- Cluster Labels Overlay -- */
@@ -793,7 +823,7 @@
       font-family: 'Consolas', 'Courier New', monospace;
       font-size: 11px;
       line-height: 1.3;
-      color: #f4e7cd;
+      color: #222222;
       pointer-events: none;
       padding-left: 1.1em;
       text-indent: -1.1em;
@@ -806,24 +836,30 @@
       vertical-align: 1px;
     }
     .node-label--special {
-      color: #eedcb0;
+      color: #444444;
       opacity: 0.7;
     }
 
     .node-label.label-selected {
       opacity: 1 !important;
       font-weight: 700;
+      background: #111111;
+      color: #ffffff !important;
+      padding: 2px 6px 2px 6px;
+      margin-left: -5px;
     }
     .node-label.label-selected .nl-bullet {
-      text-shadow: 0 0 8px currentColor, 0 0 16px currentColor;
+      text-shadow: none;
       font-size: 12px;
+      color: #ffffff !important;
+      opacity: 1 !important;
     }
     .node-label.label-dim {
       opacity: 0.06 !important;
     }
     .node-label.label-neighbor2 {
       font-size: 9px !important;
-      color: #7a7a7a !important;
+      color: #999999 !important;
     }
 
     /* Square-only mode — hide text, show just the bullet */
@@ -877,6 +913,9 @@
       autocomplete="off"
     >
     <button id="pick-folder-btn">SELECT NOTES FOLDER</button>
+    <div id="setup-divider">OR</div>
+    <button id="load-graph-btn">LOAD EXTERNAL GRAPH</button>
+    <input type="file" id="graph-file-input" accept=".html" style="display:none">
     <button id="load-cache-btn" class="hidden">RESUME PREVIOUS SESSION</button>
     <div id="setup-status"></div>
   </div>
@@ -944,18 +983,63 @@
     <div id="cluster-labels"></div>
 
     <!-- Config Panel: bottom-right -->
-    <button id="theme-toggle" title="Switch color theme">WARM</button>
+    <button id="theme-toggle" title="Switch color theme">MINIMAL</button>
 
   </div><!-- /main -->
 
   <script type="module">
     import { UMAP } from 'https://esm.sh/umap-js@1.4.0';
-    import ForceGraph3D from 'https://esm.sh/3d-force-graph@1';
-    import * as THREE from 'https://esm.sh/three@0.170.0';
-    import { CSS2DRenderer, CSS2DObject } from 'https://esm.sh/three@0.170.0/addons/renderers/CSS2DRenderer.js';
-    import { EffectComposer } from 'https://esm.sh/three@0.170.0/addons/postprocessing/EffectComposer.js';
-    import { RenderPass } from 'https://esm.sh/three@0.170.0/addons/postprocessing/RenderPass.js';
-    import { UnrealBloomPass } from 'https://esm.sh/three@0.170.0/addons/postprocessing/UnrealBloomPass.js';
+    import ForceGraph3D from 'https://esm.sh/3d-force-graph@1?deps=three@0.175.0';
+    import * as THREE from 'https://esm.sh/three@0.175.0';
+    import { CSS2DRenderer, CSS2DObject } from 'https://esm.sh/three@0.175.0/addons/renderers/CSS2DRenderer.js';
+
+    // ═══════════════════════════════════════════════
+    // WebGPU Detection + Conditional Imports
+    // ═══════════════════════════════════════════════
+    let gpuAvailable = false;
+    let gpuDevice = null;
+    let WebGPURenderer = null;
+    let bloomModule;
+
+    try {
+      if (navigator.gpu) {
+        const adapter = await navigator.gpu.requestAdapter();
+        if (adapter) {
+          gpuDevice = await adapter.requestDevice();
+          const wgpuMod = await import('https://esm.sh/three@0.175.0/addons/renderers/webgpu/WebGPURenderer.js');
+          WebGPURenderer = wgpuMod.default || wgpuMod.WebGPURenderer;
+          const { PostProcessing } = await import('https://esm.sh/three@0.175.0/addons/postprocessing/PostProcessing.js');
+          const tsl = await import('https://esm.sh/three@0.175.0/tsl');
+          const bloomMod = await import('https://esm.sh/three@0.175.0/addons/tsl/display/BloomNode.js');
+          bloomModule = { type: 'webgpu', PostProcessing, pass: tsl.pass, bloom: bloomMod.bloom };
+          gpuAvailable = true;
+        }
+      }
+    } catch (e) {
+      console.warn('WebGPU init failed, falling back to WebGL:', e);
+    }
+
+    if (!gpuAvailable) {
+      const { EffectComposer } = await import('https://esm.sh/three@0.175.0/addons/postprocessing/EffectComposer.js');
+      const { RenderPass } = await import('https://esm.sh/three@0.175.0/addons/postprocessing/RenderPass.js');
+      const { UnrealBloomPass } = await import('https://esm.sh/three@0.175.0/addons/postprocessing/UnrealBloomPass.js');
+      bloomModule = { type: 'webgl', EffectComposer, RenderPass, UnrealBloomPass };
+    }
+
+    // ═══════════════════════════════════════════════
+    // Parallel Execution Utilities
+    // ═══════════════════════════════════════════════
+
+    function runInWorker(workerCode, data, transferables = []) {
+      return new Promise((resolve, reject) => {
+        const blob = new Blob([workerCode], { type: 'application/javascript' });
+        const url = URL.createObjectURL(blob);
+        const worker = new Worker(url);
+        worker.onmessage = (e) => { worker.terminate(); URL.revokeObjectURL(url); resolve(e.data); };
+        worker.onerror = (e) => { worker.terminate(); URL.revokeObjectURL(url); reject(new Error(e.message)); };
+        worker.postMessage(data, transferables);
+      });
+    }
 
     // ═══════════════════════════════════════════════
     // API Key Persistence
@@ -1083,7 +1167,7 @@
     const setupStatus = document.getElementById('setup-status');
 
     // Restore graph from a cached session object
-    function restoreFromCache(session) {
+    async function restoreFromCache(session) {
       document.getElementById('setup').classList.add('hidden');
       document.getElementById('main').classList.remove('hidden');
       document.getElementById('reanalyze-btn').classList.remove('hidden');
@@ -1097,7 +1181,7 @@
         distrib: (session.labeledEdges || []).map(e => ({ ...e, topology: 'distrib' })),
       };
       const combined = [...edgeSets.central, ...edgeSets.decentral, ...edgeSets.distrib];
-      initGraph(allNodes, combined);
+      await initGraph(allNodes, combined);
       buildLegend(session.clusterNames);
       buildClusterLabels(session.clusterNames);
       const activeEdges = edgeSets[currentLayout] || [];
@@ -1134,7 +1218,7 @@
         if (session && session.fingerprint === fp) {
           setupStatus.textContent = `CACHE HIT — RESTORING ${session.nodeCount} NOTES`;
           await sleep(300);
-          restoreFromCache(session);
+          await restoreFromCache(session);
           return;
         }
 
@@ -1158,6 +1242,226 @@
       }
     });
 
+    // ── External graph import ───────────────────────────────────────────
+
+    function parseExternalGraph(htmlText) {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(htmlText, 'text/html');
+      const scripts = doc.querySelectorAll('script');
+
+      // Detect format: "var nodesArr" (matria) vs "new vis.DataSet" (nebula/vis.js)
+      let dataScript = null;
+      let format = null;
+      for (const s of scripts) {
+        const txt = s.textContent;
+        if (txt.includes('var nodesArr')) { dataScript = txt; format = 'matria'; break; }
+        if (txt.includes('new vis.DataSet(')) { dataScript = txt; format = 'visjs'; break; }
+      }
+      if (!dataScript) throw new Error('No graph data found in file');
+
+      if (format === 'matria') return parseMatriaFormat(dataScript);
+      if (format === 'visjs') return parseVisJsFormat(dataScript);
+      throw new Error('Unrecognized graph format');
+    }
+
+    function parseMatriaFormat(script) {
+      const varNames = [
+        'nodesArr', 'edgesArr', 'DOMAIN_COLORS', 'DOMAIN_LABELS',
+        'DOMAIN_MAP', 'TAG_SCHEMA', 'TAG_COUNTS', 'EDGE_TYPE_COUNTS'
+      ];
+      const lines = [];
+      for (const line of script.split('\n')) {
+        const trimmed = line.trim();
+        if (varNames.some(v => trimmed.startsWith('var ' + v + ' =') || trimmed.startsWith('var ' + v + '='))) {
+          lines.push(trimmed);
+        }
+      }
+      if (lines.length < 2) throw new Error('Could not extract graph variables');
+      const code = lines.join('\n')
+        + '\nreturn {' + varNames.join(',') + '};';
+      return new Function(code)();
+    }
+
+    function parseVisJsFormat(script) {
+      // Extract the JSON arrays from: nodes = new vis.DataSet([...])
+      // and: edges = new vis.DataSet([...])
+      const extractArray = (varName) => {
+        const re = new RegExp(varName + '\\s*=\\s*new\\s+vis\\.DataSet\\(');
+        const match = re.exec(script);
+        if (!match) return [];
+        let start = match.index + match[0].length;
+        // Find the matching closing paren by bracket counting
+        let depth = 1; let i = start;
+        while (i < script.length && depth > 0) {
+          if (script[i] === '(' || script[i] === '[') depth++;
+          else if (script[i] === ')' || script[i] === ']') depth--;
+          i++;
+        }
+        // i now points after the closing ), the array is between start and i-1
+        const jsonStr = script.substring(start, i - 1);
+        return JSON.parse(jsonStr);
+      };
+
+      const rawNodes = extractArray('nodes');
+      const rawEdges = extractArray('edges');
+      if (!rawNodes.length) throw new Error('No nodes found in vis.js DataSet');
+
+      // Build domain colors from unique groups
+      const groupSet = new Set(rawNodes.map(n => n.group || 'Unknown'));
+      // Default palette for auto-assignment
+      const palette = [
+        '#42A5F5','#66BB6A','#FFA726','#EF5350','#AB47BC',
+        '#26C6DA','#9CCC65','#78909C','#EC407A','#8D6E63',
+        '#FF7043','#7C4DFF','#FFD54F','#4DB6AC','#F06292',
+        '#AED581','#4FC3F7','#BA68C8','#FFB74D','#A1887F'
+      ];
+      const DOMAIN_COLORS = {};
+      const DOMAIN_LABELS = {};
+      let ci = 0;
+      groupSet.forEach(g => {
+        DOMAIN_COLORS[g] = palette[ci % palette.length];
+        DOMAIN_LABELS[g] = g;
+        ci++;
+      });
+
+      // Build edge type counts and colors from edges
+      const EDGE_TYPE_COUNTS = {};
+      const edgeTypeColors = {};
+      rawEdges.forEach(e => {
+        const et = e.title || 'UNKNOWN';
+        EDGE_TYPE_COUNTS[et] = (EDGE_TYPE_COUNTS[et] || 0) + 1;
+        if (!edgeTypeColors[et] && e.color) {
+          edgeTypeColors[et] = typeof e.color === 'string' ? e.color : e.color.color || '#999';
+        }
+      });
+
+      // Build TAG_COUNTS from nodes
+      const TAG_COUNTS = {};
+      rawNodes.forEach(n => {
+        const tag = n.group || 'Unknown';
+        TAG_COUNTS[tag] = (TAG_COUNTS[tag] || 0) + 1;
+      });
+
+      // Convert to matria-compatible format
+      const nodesArr = rawNodes.map(n => ({
+        id: n.id,
+        label: n.label || n.id,
+        _tag: n.group || 'Unknown',
+        _domain: n.group || 'Unknown',
+        _vid: n.id,
+        // Preserve title HTML for detail card metadata
+        _tooltip: n.title || '',
+        size: n.size || 10,
+      }));
+
+      const edgesArr = rawEdges.map(e => ({
+        from: e.from,
+        to: e.to,
+        _edgeType: e.title || 'UNKNOWN',
+        color: typeof e.color === 'string' ? { color: e.color } : e.color,
+      }));
+
+      return {
+        nodesArr, edgesArr, DOMAIN_COLORS, DOMAIN_LABELS,
+        TAG_COUNTS, EDGE_TYPE_COUNTS,
+        TAG_SCHEMA: null, DOMAIN_MAP: null,
+        _edgeTypeColors: edgeTypeColors,
+      };
+    }
+
+    function mapExternalToInternal(parsed) {
+      const { nodesArr, edgesArr, DOMAIN_COLORS, DOMAIN_LABELS, DOMAIN_MAP,
+              TAG_SCHEMA, TAG_COUNTS, EDGE_TYPE_COUNTS } = parsed;
+
+      const domainList = Object.keys(DOMAIN_COLORS || {});
+      const domainToClusterId = {};
+      domainList.forEach((d, i) => { domainToClusterId[d] = i; });
+
+      const clusterColors = domainList.map(d => DOMAIN_COLORS[d]);
+      const clusterNames = {};
+      domainList.forEach((d, i) => {
+        clusterNames[i] = (DOMAIN_LABELS && DOMAIN_LABELS[d]) || d;
+      });
+
+      const nodes = nodesArr.map(n => ({
+        id: n.id,
+        name: n.label || n.id,
+        _tag: n._tag || '',
+        _domain: n._domain || 'default',
+        _vid: n._vid || n.id,
+        _tooltip: n._tooltip || '',
+        cluster_id: domainToClusterId[n._domain] ?? domainToClusterId['default'] ?? 0,
+        cluster_name: (DOMAIN_LABELS && DOMAIN_LABELS[n._domain]) || n._domain || '',
+        text_preview: '',
+        filename: '',
+        is_medoid: 0,
+        is_llm_center: 0,
+      }));
+
+      const edges = edgesArr.map(e => ({
+        source: e.from,
+        target: e.to,
+        label_forward: e._edgeType || '',
+        label_backward: e._edgeType || '',
+        topology: 'graph',
+      }));
+
+      return {
+        nodes, edges, clusterColors, clusterNames,
+        meta: { TAG_SCHEMA, TAG_COUNTS, EDGE_TYPE_COUNTS, DOMAIN_MAP }
+      };
+    }
+
+    async function loadExternalGraph(file) {
+      setupStatus.textContent = 'READING GRAPH FILE...';
+      const text = await file.text();
+
+      setupStatus.textContent = 'PARSING GRAPH DATA...';
+      const parsed = parseExternalGraph(text);
+
+      const mapped = mapExternalToInternal(parsed);
+      setupStatus.textContent = `FOUND ${mapped.nodes.length} NODES, ${mapped.edges.length} EDGES`;
+
+      isExternalGraph = true;
+      externalGraphMeta = mapped.meta;
+      CLUSTER_COLORS = mapped.clusterColors;
+      allNodes = mapped.nodes;
+      edgeSets = { graph: mapped.edges };
+      currentLayout = 'graph';
+
+      document.getElementById('setup').classList.add('hidden');
+      document.getElementById('main').classList.remove('hidden');
+      document.getElementById('reanalyze-btn').classList.add('hidden');
+      document.getElementById('controls').style.display = 'none';
+      const knnRow = document.getElementById('readout-knn');
+      if (knnRow && knnRow.parentElement) knnRow.parentElement.style.display = 'none';
+
+      setBootStage('LOADING GRAPH...', `${mapped.nodes.length} NODES`);
+
+      await initGraph(mapped.nodes, mapped.edges);
+      buildLegend(mapped.clusterNames);
+      buildClusterLabels(mapped.clusterNames);
+      buildReadouts(mapped.nodes.length, mapped.edges.length);
+
+      setBootStage(`GRAPH ONLINE // ${mapped.nodes.length} NODES // ${mapped.edges.length} EDGES`, '');
+      setTimeout(hideBootStatus, 2000);
+    }
+
+    document.getElementById('load-graph-btn').addEventListener('click', () => {
+      document.getElementById('graph-file-input').click();
+    });
+
+    document.getElementById('graph-file-input').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      try {
+        await loadExternalGraph(file);
+      } catch (err) {
+        setupStatus.textContent = 'ERROR: ' + err.message.toUpperCase();
+        console.error(err);
+      }
+    });
+
     // Load from cache (fallback button — no folder match needed)
     loadCacheBtn.addEventListener('click', async () => {
       try {
@@ -1167,7 +1471,7 @@
           setupStatus.textContent = 'ERROR: NO CACHED SESSION FOUND';
           return;
         }
-        restoreFromCache(session);
+        await restoreFromCache(session);
       } catch (err) {
         setupStatus.textContent = 'ERROR: ' + err.message.toUpperCase();
       }
@@ -1208,10 +1512,14 @@
     const EMBED_BATCH_SIZE = 20;
 
     async function embedTexts(texts, apiKey, onProgress) {
-      const allEmbeddings = [];
+      const CONCURRENCY = 4;
+      const totalBatches = Math.ceil(texts.length / EMBED_BATCH_SIZE);
+      const results = new Array(totalBatches);
+      let completed = 0;
 
-      for (let i = 0; i < texts.length; i += EMBED_BATCH_SIZE) {
-        const batch = texts.slice(i, i + EMBED_BATCH_SIZE);
+      async function processBatch(batchIdx) {
+        const start = batchIdx * EMBED_BATCH_SIZE;
+        const batch = texts.slice(start, start + EMBED_BATCH_SIZE);
         const response = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${EMBED_MODEL}:batchEmbedContents?key=${apiKey}`,
           {
@@ -1232,12 +1540,20 @@
         }
 
         const data = await response.json();
-        const vectors = data.embeddings.map(e => e.values);
-        allEmbeddings.push(...vectors);
-        if (onProgress) onProgress(Math.min(i + EMBED_BATCH_SIZE, texts.length), texts.length);
+        results[batchIdx] = data.embeddings.map(e => e.values);
+        completed++;
+        if (onProgress) onProgress(Math.min(completed * EMBED_BATCH_SIZE, texts.length), texts.length);
       }
 
-      return allEmbeddings;
+      const executing = new Set();
+      for (let i = 0; i < totalBatches; i++) {
+        const p = processBatch(i).then(() => executing.delete(p));
+        executing.add(p);
+        if (executing.size >= CONCURRENCY) await Promise.race(executing);
+      }
+      await Promise.all(executing);
+
+      return results.flat();
     }
 
     const LLM_MODEL = 'gemini-2.5-flash';
@@ -1293,6 +1609,395 @@
         }
       }
       return matrix;
+    }
+
+    // --- GPU Cosine Distance Matrix (WGSL compute shader) ---
+
+    const WGSL_COSINE_DIST = `
+struct CosineParams {
+  n: u32,
+  dim: u32,
+};
+
+@group(0) @binding(0) var<storage, read> embeddings: array<f32>;
+@group(0) @binding(1) var<storage, read> norms: array<f32>;
+@group(0) @binding(2) var<storage, read_write> distMatrix: array<f32>;
+@group(0) @binding(3) var<uniform> params: CosineParams;
+
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  let j = gid.y;
+  if (i >= params.n || j >= params.n || i >= j) { return; }
+  var dp: f32 = 0.0;
+  for (var d = 0u; d < params.dim; d = d + 1u) {
+    dp += embeddings[i * params.dim + d] * embeddings[j * params.dim + d];
+  }
+  let dist = 1.0 - dp / (norms[i] * norms[j] + 1e-9);
+  distMatrix[i * params.n + j] = dist;
+  distMatrix[j * params.n + i] = dist;
+}`;
+
+    async function gpuCosineDistanceMatrix(embeddings) {
+      const n = embeddings.length;
+      const dim = embeddings[0].length;
+
+      // Flatten embeddings to Float32Array
+      const flatEmb = new Float32Array(n * dim);
+      for (let i = 0; i < n; i++) {
+        for (let d = 0; d < dim; d++) flatEmb[i * dim + d] = embeddings[i][d];
+      }
+
+      // Precompute norms on CPU
+      const norms = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        let s = 0;
+        for (let d = 0; d < dim; d++) s += embeddings[i][d] * embeddings[i][d];
+        norms[i] = Math.sqrt(s);
+      }
+
+      const embBuffer = gpuDevice.createBuffer({ size: flatEmb.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+      const normBuffer = gpuDevice.createBuffer({ size: norms.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+      const distSize = n * n * 4;
+      const distBuffer = gpuDevice.createBuffer({ size: distSize, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+      const readBuffer = gpuDevice.createBuffer({ size: distSize, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+      const paramsData = new Uint32Array([n, dim, 0, 0]); // padded to 16 bytes
+      const paramsBuffer = gpuDevice.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+
+      gpuDevice.queue.writeBuffer(embBuffer, 0, flatEmb);
+      gpuDevice.queue.writeBuffer(normBuffer, 0, norms);
+      gpuDevice.queue.writeBuffer(paramsBuffer, 0, paramsData);
+
+      const module = gpuDevice.createShaderModule({ code: WGSL_COSINE_DIST });
+      const pipeline = gpuDevice.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'main' } });
+      const bindGroup = gpuDevice.createBindGroup({
+        layout: pipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: embBuffer } },
+          { binding: 1, resource: { buffer: normBuffer } },
+          { binding: 2, resource: { buffer: distBuffer } },
+          { binding: 3, resource: { buffer: paramsBuffer } },
+        ],
+      });
+
+      const encoder = gpuDevice.createCommandEncoder();
+      const pass = encoder.beginComputePass();
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, bindGroup);
+      pass.dispatchWorkgroups(Math.ceil(n / 16), Math.ceil(n / 16));
+      pass.end();
+      encoder.copyBufferToBuffer(distBuffer, 0, readBuffer, 0, distSize);
+      gpuDevice.queue.submit([encoder.finish()]);
+
+      await readBuffer.mapAsync(GPUMapMode.READ);
+      const result = new Float32Array(readBuffer.getMappedRange().slice(0));
+      readBuffer.unmap();
+
+      // Convert flat Float32 to Array of Float64Array
+      const matrix = Array.from({ length: n }, (_, i) => {
+        const row = new Float64Array(n);
+        for (let j = 0; j < n; j++) row[j] = result[i * n + j];
+        return row;
+      });
+
+      [embBuffer, normBuffer, distBuffer, readBuffer, paramsBuffer].forEach(b => b.destroy());
+      console.log(`GPU cosine distance: ${n}×${n} matrix computed`);
+      return matrix;
+    }
+
+    // --- Worker-parallel Cosine Distance Matrix ---
+
+    async function workerCosineDistanceMatrix(embeddings) {
+      const n = embeddings.length;
+      const dim = embeddings[0].length;
+      const numWorkers = Math.min(navigator.hardwareConcurrency || 4, n, 20);
+
+      // Flatten to shared Float64Array
+      const flat = new Float64Array(n * dim);
+      for (let i = 0; i < n; i++) {
+        for (let d = 0; d < dim; d++) flat[i * dim + d] = embeddings[i][d];
+      }
+
+      // Precompute norms
+      const norms = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        let s = 0;
+        for (let d = 0; d < dim; d++) s += embeddings[i][d] * embeddings[i][d];
+        norms[i] = Math.sqrt(s);
+      }
+
+      const workerCode = `
+        self.onmessage = function(e) {
+          const { flat, norms, n, dim, rowStart, rowEnd } = e.data;
+          const results = [];
+          for (let i = rowStart; i < rowEnd; i++) {
+            const row = new Float64Array(n);
+            for (let j = i + 1; j < n; j++) {
+              let dp = 0;
+              for (let d = 0; d < dim; d++) dp += flat[i * dim + d] * flat[j * dim + d];
+              row[j] = 1 - dp / (norms[i] * norms[j] + 1e-9);
+            }
+            results.push({ i, row });
+          }
+          self.postMessage(results);
+        };
+      `;
+
+      const rowsPerWorker = Math.ceil(n / numWorkers);
+      const promises = [];
+      for (let w = 0; w < numWorkers; w++) {
+        const rowStart = w * rowsPerWorker;
+        const rowEnd = Math.min(rowStart + rowsPerWorker, n);
+        if (rowStart >= n) break;
+        promises.push(runInWorker(workerCode, { flat, norms, n, dim, rowStart, rowEnd }));
+      }
+
+      const workerResults = await Promise.all(promises);
+      const matrix = Array.from({ length: n }, () => new Float64Array(n));
+      for (const chunk of workerResults) {
+        for (const { i, row } of chunk) {
+          for (let j = i + 1; j < n; j++) {
+            matrix[i][j] = row[j];
+            matrix[j][i] = row[j];
+          }
+        }
+      }
+
+      console.log(`Worker cosine distance: ${n}×${n} matrix, ${promises.length} workers`);
+      return matrix;
+    }
+
+    // --- Auto-dispatch: GPU → Workers → CPU fallback ---
+
+    async function cosineDistanceMatrixAuto(embeddings) {
+      if (gpuDevice && embeddings.length >= 20) {
+        try { return await gpuCosineDistanceMatrix(embeddings); } catch(e) {
+          console.warn('GPU cosine distance failed, falling back:', e);
+        }
+      }
+      if (typeof Worker !== 'undefined' && embeddings.length > 50) {
+        try { return await workerCosineDistanceMatrix(embeddings); } catch(e) {
+          console.warn('Worker cosine distance failed, falling back:', e);
+        }
+      }
+      return cosineDistanceMatrix(embeddings);
+    }
+
+    // --- GPU KMeans Assignment Step ---
+
+    const WGSL_KMEANS_ASSIGN = `
+struct KMeansParams {
+  n: u32,
+  k: u32,
+  dim: u32,
+};
+
+@group(0) @binding(0) var<storage, read> embeddings: array<f32>;
+@group(0) @binding(1) var<storage, read> centroids: array<f32>;
+@group(0) @binding(2) var<storage, read_write> labels: array<u32>;
+@group(0) @binding(3) var<uniform> params: KMeansParams;
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= params.n) { return; }
+  var bestC: u32 = 0u;
+  var bestD: f32 = 1e30;
+  for (var c = 0u; c < params.k; c = c + 1u) {
+    var dp: f32 = 0.0;
+    var normA: f32 = 0.0;
+    var normB: f32 = 0.0;
+    for (var d = 0u; d < params.dim; d = d + 1u) {
+      let a = embeddings[i * params.dim + d];
+      let b = centroids[c * params.dim + d];
+      dp += a * b;
+      normA += a * a;
+      normB += b * b;
+    }
+    let dist = 1.0 - dp / (sqrt(normA) * sqrt(normB) + 1e-9);
+    if (dist < bestD) { bestD = dist; bestC = c; }
+  }
+  labels[i] = bestC;
+}`;
+
+    async function kmeansGpu(embeddings, k, maxIter = 50) {
+      const n = embeddings.length;
+      const dim = embeddings[0].length;
+
+      // k-means++ initialization (CPU — only k iterations)
+      const centroids = [];
+      const used = new Set();
+      let first = Math.floor(Math.random() * n);
+      centroids.push([...embeddings[first]]);
+      used.add(first);
+
+      for (let c = 1; c < k; c++) {
+        let bestIdx = 0, bestDist = -1;
+        for (let i = 0; i < n; i++) {
+          if (used.has(i)) continue;
+          const minDist = Math.min(...centroids.map(cen => cosineDistance(embeddings[i], cen)));
+          if (minDist > bestDist) { bestDist = minDist; bestIdx = i; }
+        }
+        centroids.push([...embeddings[bestIdx]]);
+        used.add(bestIdx);
+      }
+
+      // Flatten embeddings
+      const flatEmb = new Float32Array(n * dim);
+      for (let i = 0; i < n; i++) {
+        for (let d = 0; d < dim; d++) flatEmb[i * dim + d] = embeddings[i][d];
+      }
+
+      const embBuffer = gpuDevice.createBuffer({ size: flatEmb.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+      gpuDevice.queue.writeBuffer(embBuffer, 0, flatEmb);
+
+      const centroidBuffer = gpuDevice.createBuffer({ size: k * dim * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+      const labelBuffer = gpuDevice.createBuffer({ size: n * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+      const readBuffer = gpuDevice.createBuffer({ size: n * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+      const paramsData = new Uint32Array([n, k, dim, 0]); // padded to 16 bytes
+      const paramsBuffer = gpuDevice.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      gpuDevice.queue.writeBuffer(paramsBuffer, 0, paramsData);
+
+      const module = gpuDevice.createShaderModule({ code: WGSL_KMEANS_ASSIGN });
+      const pipeline = gpuDevice.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'main' } });
+
+      let labels = new Int32Array(n);
+
+      for (let iter = 0; iter < maxIter; iter++) {
+        // Upload centroids
+        const flatCentroids = new Float32Array(k * dim);
+        for (let c = 0; c < k; c++) {
+          for (let d = 0; d < dim; d++) flatCentroids[c * dim + d] = centroids[c][d];
+        }
+        gpuDevice.queue.writeBuffer(centroidBuffer, 0, flatCentroids);
+
+        // GPU assign
+        const bindGroup = gpuDevice.createBindGroup({
+          layout: pipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: { buffer: embBuffer } },
+            { binding: 1, resource: { buffer: centroidBuffer } },
+            { binding: 2, resource: { buffer: labelBuffer } },
+            { binding: 3, resource: { buffer: paramsBuffer } },
+          ],
+        });
+
+        const encoder = gpuDevice.createCommandEncoder();
+        const pass = encoder.beginComputePass();
+        pass.setPipeline(pipeline);
+        pass.setBindGroup(0, bindGroup);
+        pass.dispatchWorkgroups(Math.ceil(n / 256));
+        pass.end();
+        encoder.copyBufferToBuffer(labelBuffer, 0, readBuffer, 0, n * 4);
+        gpuDevice.queue.submit([encoder.finish()]);
+
+        await readBuffer.mapAsync(GPUMapMode.READ);
+        const newLabels = new Uint32Array(readBuffer.getMappedRange().slice(0));
+        readBuffer.unmap();
+
+        // Check convergence
+        let changed = false;
+        for (let i = 0; i < n; i++) {
+          if (labels[i] !== newLabels[i]) { changed = true; break; }
+        }
+        labels = new Int32Array(newLabels);
+        if (!changed) break;
+
+        // CPU centroid update
+        for (let c = 0; c < k; c++) {
+          const members = [];
+          for (let i = 0; i < n; i++) {
+            if (labels[i] === c) members.push(embeddings[i]);
+          }
+          if (members.length > 0) centroids[c] = meanVec(members);
+        }
+      }
+
+      [embBuffer, centroidBuffer, labelBuffer, readBuffer, paramsBuffer].forEach(b => b.destroy());
+      console.log(`GPU kmeans: ${n} points, k=${k}`);
+      return { labels: Array.from(labels), centroids };
+    }
+
+    // --- Auto-dispatch KMeans: GPU → CPU fallback ---
+
+    async function kmeansAuto(embeddings, k, maxIter = 50) {
+      if (gpuDevice && embeddings.length >= 20) {
+        try { return await kmeansGpu(embeddings, k, maxIter); } catch(e) {
+          console.warn('GPU kmeans failed, falling back:', e);
+        }
+      }
+      return kmeans(embeddings, k, maxIter);
+    }
+
+    // --- UMAP in Web Worker ---
+
+    async function computeDistributedLayoutWorker(embeddings, kNeighbors) {
+      const n = embeddings.length;
+      const dim = embeddings[0].length;
+      const flat = new Float64Array(n * dim);
+      for (let i = 0; i < n; i++) {
+        for (let d = 0; d < dim; d++) flat[i * dim + d] = embeddings[i][d];
+      }
+
+      const workerCode = `
+        import { UMAP } from 'https://esm.sh/umap-js@1.4.0';
+
+        self.onmessage = function(e) {
+          const { flat, n, dim, kNeighbors } = e.data;
+          // Reconstruct embeddings array
+          const embeddings = [];
+          for (let i = 0; i < n; i++) {
+            embeddings.push(Array.from(flat.slice(i * dim, (i + 1) * dim)));
+          }
+
+          function dot(a, b) { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; }
+          function vecNorm(a) { return Math.sqrt(dot(a, a)); }
+          function cosineDistance(a, b) { return 1 - dot(a, b) / (vecNorm(a) * vecNorm(b) + 1e-9); }
+
+          const umap = new UMAP({
+            nComponents: 3,
+            nNeighbors: Math.min(kNeighbors, n - 1),
+            minDist: 0.1,
+            distanceFn: cosineDistance,
+          });
+
+          const coords = umap.fit(embeddings);
+          self.postMessage(coords);
+        };
+      `;
+
+      const blob = new Blob([workerCode], { type: 'application/javascript' });
+      const url = URL.createObjectURL(blob);
+      return new Promise((resolve, reject) => {
+        const worker = new Worker(url, { type: 'module' });
+        worker.onmessage = (e) => {
+          worker.terminate();
+          URL.revokeObjectURL(url);
+          const coords = e.data;
+          resolve({
+            x: normalizeRange(coords.map(c => c[0])),
+            y: normalizeRange(coords.map(c => c[1])),
+            z: normalizeRange(coords.map(c => c[2])),
+          });
+        };
+        worker.onerror = (e) => {
+          worker.terminate();
+          URL.revokeObjectURL(url);
+          reject(new Error(e.message));
+        };
+        worker.postMessage({ flat, n, dim, kNeighbors });
+      });
+    }
+
+    // --- Auto-dispatch UMAP: Worker → CPU fallback ---
+
+    async function computeDistributedLayoutAuto(embeddings, kNeighbors) {
+      if (typeof Worker !== 'undefined') {
+        try { return await computeDistributedLayoutWorker(embeddings, kNeighbors); } catch(e) {
+          console.warn('UMAP Worker failed, falling back to main thread:', e);
+        }
+      }
+      return computeDistributedLayout(embeddings, kNeighbors);
     }
 
     function normalizeRange(arr) {
@@ -1689,7 +2394,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
     const N_CLUSTERS = 5;
     const K_NEIGHBORS = 5;
     const SCALE = 280;
-    let CLUSTER_COLORS = ['#c45c3e', '#d4a843', '#a8523a', '#c47a43', '#8b3a2a'];
+    let CLUSTER_COLORS = ['#1a1a1a', '#4a4a4a', '#2a2a2a', '#3a3a3a', '#555555'];
 
     function syncClusterColors() {
       CLUSTER_COLORS = [VFX.cluster0.val, VFX.cluster1.val, VFX.cluster2.val, VFX.cluster3.val, VFX.cluster4.val];
@@ -1701,20 +2406,20 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
 
     const VFX = {
       // Colors + alphas
-      bgColor:            { val: '#050505', label: 'BACKGROUND',   section: 'COLORS',   refresh: 'colors', type: 'color' },
+      bgColor:            { val: '#ffffff', label: 'BACKGROUND',   section: 'COLORS',   refresh: 'colors', type: 'color' },
       bgAlpha:            { val: 1.0,   min: 0, max: 1, step: 0.05, label: 'BG ALPHA',        section: 'COLORS',   refresh: 'colors' },
-      labelColor:         { val: '#f5f1eb', label: 'LABEL TEXT',    section: 'COLORS',   refresh: 'colors', type: 'color' },
+      labelColor:         { val: '#222222', label: 'LABEL TEXT',    section: 'COLORS',   refresh: 'colors', type: 'color' },
       labelAlpha:         { val: 1.0,   min: 0, max: 1, step: 0.05, label: 'LABEL ALPHA',     section: 'COLORS',   refresh: 'colors' },
-      linkColor:          { val: '#f06f05', label: 'LINK',          section: 'COLORS',   refresh: 'colors', type: 'color' },
-      linkAlpha:          { val: 0.6,   min: 0, max: 1, step: 0.01, label: 'LINK ALPHA',      section: 'COLORS',   refresh: 'colors' },
-      particleColor:      { val: '#e41b1b', label: 'PARTICLE',      section: 'COLORS',   refresh: 'colors', type: 'color' },
-      particleAlpha:      { val: 1.0,   min: 0, max: 1, step: 0.05, label: 'PARTICLE ALPHA',  section: 'COLORS',   refresh: 'colors' },
+      linkColor:          { val: '#999999', label: 'LINK',          section: 'COLORS',   refresh: 'colors', type: 'color' },
+      linkAlpha:          { val: 0.4,   min: 0, max: 1, step: 0.01, label: 'LINK ALPHA',      section: 'COLORS',   refresh: 'colors' },
+      particleColor:      { val: '#333333', label: 'PARTICLE',      section: 'COLORS',   refresh: 'colors', type: 'color' },
+      particleAlpha:      { val: 0.6,   min: 0, max: 1, step: 0.05, label: 'PARTICLE ALPHA',  section: 'COLORS',   refresh: 'colors' },
       // Cluster colors
-      cluster0:           { val: '#c45c3e', label: 'CLUSTER 1',     section: 'CLUSTERS', refresh: 'clusters', type: 'color' },
-      cluster1:           { val: '#d4a843', label: 'CLUSTER 2',     section: 'CLUSTERS', refresh: 'clusters', type: 'color' },
-      cluster2:           { val: '#a8523a', label: 'CLUSTER 3',     section: 'CLUSTERS', refresh: 'clusters', type: 'color' },
-      cluster3:           { val: '#c47a43', label: 'CLUSTER 4',     section: 'CLUSTERS', refresh: 'clusters', type: 'color' },
-      cluster4:           { val: '#8b3a2a', label: 'CLUSTER 5',     section: 'CLUSTERS', refresh: 'clusters', type: 'color' },
+      cluster0:           { val: '#1a1a1a', label: 'CLUSTER 1',     section: 'CLUSTERS', refresh: 'clusters', type: 'color' },
+      cluster1:           { val: '#4a4a4a', label: 'CLUSTER 2',     section: 'CLUSTERS', refresh: 'clusters', type: 'color' },
+      cluster2:           { val: '#2a2a2a', label: 'CLUSTER 3',     section: 'CLUSTERS', refresh: 'clusters', type: 'color' },
+      cluster3:           { val: '#3a3a3a', label: 'CLUSTER 4',     section: 'CLUSTERS', refresh: 'clusters', type: 'color' },
+      cluster4:           { val: '#555555', label: 'CLUSTER 5',     section: 'CLUSTERS', refresh: 'clusters', type: 'color' },
       clusterAlpha:       { val: 1.0,   min: 0, max: 1, step: 0.05, label: 'BULLET ALPHA',    section: 'CLUSTERS', refresh: 'clusters' },
       // Hit-target scale (affects hover detection area)
       nodeScale:          { val: 18,    min: 4,    max: 40,   step: 1,     label: 'HIT AREA',        section: 'NODES',      refresh: 'scale' },
@@ -1734,22 +2439,22 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       linkCurvatureVal:   { val: 0.50,  min: 0,    max: 0.5,  step: 0.05,  label: 'CURVATURE',       section: 'EDGES',      refresh: 'links' },
       linkHoverPrec:      { val: 18,    min: 2,    max: 40,   step: 1,     label: 'HOVER PREC',      section: 'EDGES',      refresh: 'links' },
       // Post-processing
-      bloomStrength:      { val: 0.4,   min: 0,    max: 3.0,  step: 0.05,  label: 'BLOOM STR',       section: 'POST FX',    refresh: 'postfx' },
-      bloomRadius:        { val: 0.4,   min: 0,    max: 1.0,  step: 0.05,  label: 'BLOOM RADIUS',    section: 'POST FX',    refresh: 'postfx' },
-      bloomThreshold:     { val: 0.15,  min: 0,    max: 1.0,  step: 0.05,  label: 'BLOOM THRESH',    section: 'POST FX',    refresh: 'postfx' },
+      bloomStrength:      { val: 0.0,   min: 0,    max: 3.0,  step: 0.05,  label: 'BLOOM STR',       section: 'POST FX',    refresh: 'postfx' },
+      bloomRadius:        { val: 0.0,   min: 0,    max: 1.0,  step: 0.05,  label: 'BLOOM RADIUS',    section: 'POST FX',    refresh: 'postfx' },
+      bloomThreshold:     { val: 1.0,   min: 0,    max: 1.0,  step: 0.05,  label: 'BLOOM THRESH',    section: 'POST FX',    refresh: 'postfx' },
       // UI Chrome (CSS variable colors)
-      chromeBg:           { val: '#0a0a0f', label: 'UI BG',        section: 'UI CHROME', refresh: 'chrome', type: 'color' },
-      chromeBgPanel:      { val: '#080807', label: 'PANEL BG',     section: 'UI CHROME', refresh: 'chrome', type: 'color' },
-      chromeBgPanelA:     { val: 0.88, min: 0, max: 1, step: 0.05, label: 'PANEL ALPHA', section: 'UI CHROME', refresh: 'chrome' },
-      chromeBorder:       { val: '#cd6d13', label: 'BORDER',       section: 'UI CHROME', refresh: 'chrome', type: 'color' },
-      chromeText:         { val: '#e8cea6', label: 'TEXT',          section: 'UI CHROME', refresh: 'chrome', type: 'color' },
-      chromeTextDim:      { val: '#cd8218', label: 'TEXT DIM',     section: 'UI CHROME', refresh: 'chrome', type: 'color' },
-      chromeTextBright:   { val: '#ffeab8', label: 'TEXT BRIGHT',  section: 'UI CHROME', refresh: 'chrome', type: 'color' },
-      chromeAccent:       { val: '#d07b1b', label: 'ACCENT',       section: 'UI CHROME', refresh: 'chrome', type: 'color' },
-      chromeCyan:         { val: '#d4a843', label: 'CYAN',          section: 'UI CHROME', refresh: 'chrome', type: 'color' },
-      chromeLightCyan:    { val: '#e8c46a', label: 'LIGHT CYAN',  section: 'UI CHROME', refresh: 'chrome', type: 'color' },
-      chromeIndigo:       { val: '#c47a43', label: 'INDIGO',       section: 'UI CHROME', refresh: 'chrome', type: 'color' },
-      chromeAmber:        { val: '#d4a843', label: 'AMBER',        section: 'UI CHROME', refresh: 'chrome', type: 'color' },
+      chromeBg:           { val: '#ffffff', label: 'UI BG',        section: 'UI CHROME', refresh: 'chrome', type: 'color' },
+      chromeBgPanel:      { val: '#f5f5f5', label: 'PANEL BG',     section: 'UI CHROME', refresh: 'chrome', type: 'color' },
+      chromeBgPanelA:     { val: 0.92, min: 0, max: 1, step: 0.05, label: 'PANEL ALPHA', section: 'UI CHROME', refresh: 'chrome' },
+      chromeBorder:       { val: '#d0d0d0', label: 'BORDER',       section: 'UI CHROME', refresh: 'chrome', type: 'color' },
+      chromeText:         { val: '#333333', label: 'TEXT',          section: 'UI CHROME', refresh: 'chrome', type: 'color' },
+      chromeTextDim:      { val: '#888888', label: 'TEXT DIM',     section: 'UI CHROME', refresh: 'chrome', type: 'color' },
+      chromeTextBright:   { val: '#111111', label: 'TEXT BRIGHT',  section: 'UI CHROME', refresh: 'chrome', type: 'color' },
+      chromeAccent:       { val: '#555555', label: 'ACCENT',       section: 'UI CHROME', refresh: 'chrome', type: 'color' },
+      chromeCyan:         { val: '#666666', label: 'CYAN',          section: 'UI CHROME', refresh: 'chrome', type: 'color' },
+      chromeLightCyan:    { val: '#444444', label: 'LIGHT CYAN',  section: 'UI CHROME', refresh: 'chrome', type: 'color' },
+      chromeIndigo:       { val: '#555555', label: 'INDIGO',       section: 'UI CHROME', refresh: 'chrome', type: 'color' },
+      chromeAmber:        { val: '#666666', label: 'AMBER',        section: 'UI CHROME', refresh: 'chrome', type: 'color' },
     };
 
     // ═══════════════════════════════════════════════
@@ -1764,6 +2469,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         particleColor: '#e41b1b', particleAlpha: 1.0,
         cluster0: '#c45c3e', cluster1: '#d4a843', cluster2: '#a8523a',
         cluster3: '#c47a43', cluster4: '#8b3a2a', clusterAlpha: 1.0,
+        bloomStrength: 0.4, bloomRadius: 0.4, bloomThreshold: 0.15,
         chromeBg: '#0a0a0f', chromeBgPanel: '#080807', chromeBgPanelA: 0.88,
         chromeBorder: '#cd6d13', chromeText: '#e8cea6', chromeTextDim: '#cd8218',
         chromeTextBright: '#ffeab8', chromeAccent: '#d07b1b',
@@ -1777,15 +2483,30 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         particleColor: '#87e97f', particleAlpha: 1.0,
         cluster0: '#0e15e1', cluster1: '#7babea', cluster2: '#e4a1f7',
         cluster3: '#afdf2a', cluster4: '#3eec32', clusterAlpha: 1.0,
+        bloomStrength: 0.4, bloomRadius: 0.4, bloomThreshold: 0.15,
         chromeBg: '#3a3c40', chromeBgPanel: '#32343a', chromeBgPanelA: 0.92,
         chromeBorder: '#6a6c72', chromeText: '#e8e8e8', chromeTextDim: '#9a9a9a',
         chromeTextBright: '#ffffff', chromeAccent: '#7aacdf',
         chromeCyan: '#7aacdf', chromeLightCyan: '#a0c8ef',
         chromeIndigo: '#8a9abf', chromeAmber: '#7aacdf',
       },
+      minimal: {
+        bgColor: '#ffffff', bgAlpha: 1.0,
+        labelColor: '#222222', labelAlpha: 1.0,
+        linkColor: '#999999', linkAlpha: 0.4,
+        particleColor: '#333333', particleAlpha: 0.6,
+        cluster0: '#1a1a1a', cluster1: '#4a4a4a', cluster2: '#2a2a2a',
+        cluster3: '#3a3a3a', cluster4: '#555555', clusterAlpha: 1.0,
+        bloomStrength: 0.0, bloomRadius: 0.0, bloomThreshold: 1.0,
+        chromeBg: '#ffffff', chromeBgPanel: '#f5f5f5', chromeBgPanelA: 0.92,
+        chromeBorder: '#d0d0d0', chromeText: '#333333', chromeTextDim: '#888888',
+        chromeTextBright: '#111111', chromeAccent: '#555555',
+        chromeCyan: '#666666', chromeLightCyan: '#444444',
+        chromeIndigo: '#555555', chromeAmber: '#666666',
+      },
     };
 
-    let currentTheme = 'warm';
+    let currentTheme = 'minimal';
 
     function applyTheme(name) {
       const theme = COLOR_THEMES[name];
@@ -1813,6 +2534,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       refreshColors();
       refreshClusters();
       refreshChrome();
+      refreshPostFx();
 
       // Update button label
       document.getElementById('theme-toggle').textContent = name.toUpperCase();
@@ -1857,6 +2579,29 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       const group = new THREE.Group();
       group.add(hitSprite);
 
+      // Selection ring — sprite always faces camera
+      if (!createNodeObject._ringTex) {
+        const rc = document.createElement('canvas');
+        rc.width = 64; rc.height = 64;
+        const rx = rc.getContext('2d');
+        rx.beginPath();
+        rx.arc(32, 32, 28, 0, Math.PI * 2);
+        rx.lineWidth = 3;
+        rx.strokeStyle = '#111111';
+        rx.stroke();
+        createNodeObject._ringTex = new THREE.CanvasTexture(rc);
+      }
+      const ringMat = new THREE.SpriteMaterial({
+        map: createNodeObject._ringTex,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      });
+      const ringSprite = new THREE.Sprite(ringMat);
+      ringSprite.scale.set(baseScale * 1.2, baseScale * 1.2, 1);
+      group.add(ringSprite);
+      node.__ringMat = ringMat;
+
       // CSS2D label — constant screen-space size regardless of zoom
       const lines = wrapNodeLabel(node.name);
       if (lines.length) {
@@ -1884,16 +2629,22 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       lbl.classList.remove('label-selected', 'label-dim', 'label-neighbor2');
       lbl.style.fontSize = '';
       lbl.style.color = '';
+      lbl.style.background = '';
+      lbl.style.marginLeft = '';
+      lbl.style.padding = '';
+      // Ring visibility
+      const ring = node.__ringMat;
+      if (ring) ring.opacity = 0;
       switch (state) {
         case 'hover':
           lbl.style.opacity = '1';
-          lbl.style.color = '#ffffff';
           lbl.classList.add('label-selected');
+          if (ring) ring.opacity = 0.5;
           break;
         case 'selected':
           lbl.style.opacity = '1';
-          lbl.style.color = '#ffffff';
           lbl.classList.add('label-selected');
+          if (ring) ring.opacity = 0.8;
           break;
         case 'sel-neighbor':
           lbl.style.opacity = '0.7';
@@ -1964,9 +2715,15 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
 
     function refreshPostFx() {
       if (!bloomPass) return;
-      bloomPass.strength = VFX.bloomStrength.val;
-      bloomPass.radius = VFX.bloomRadius.val;
-      bloomPass.threshold = VFX.bloomThreshold.val;
+      if (bloomModule.type === 'webgpu') {
+        bloomPass.strength.value = VFX.bloomStrength.val;
+        bloomPass.radius.value = VFX.bloomRadius.val;
+        bloomPass.threshold.value = VFX.bloomThreshold.val;
+      } else {
+        bloomPass.strength = VFX.bloomStrength.val;
+        bloomPass.radius = VFX.bloomRadius.val;
+        bloomPass.threshold = VFX.bloomThreshold.val;
+      }
     }
 
     function refreshColors() {
@@ -2019,42 +2776,43 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
 
     async function runPipeline(notes, apiKey, fingerprint) {
       try {
+        const t0 = performance.now();
+
         // ── STAGE 1: SCANNING ──
         setBootStage('SCANNING...', `${notes.length} NOTES LOADED`);
-        await sleep(300); // brief pause so user sees it
 
         // ── STAGE 2: EMBEDDING ──
         const texts = notes.map(n => n.text.slice(0, 2000));
         const embeddings = await embedTexts(texts, apiKey, (done, total) => {
           setBootStage('EMBEDDING...', `${done}/${total}`);
         });
+        console.log(`Stage 2 (embedding): ${((performance.now() - t0) / 1000).toFixed(1)}s`);
 
         // ── STAGE 3: COMPUTING TOPOLOGY ──
-        setBootStage('COMPUTING TOPOLOGY...', 'CLUSTERING');
-        await sleep(50);
+        const t3 = performance.now();
+
+        // Phase A: kmeans + PCA (can run in parallel)
+        setBootStage('COMPUTING TOPOLOGY...', 'CLUSTERING + PCA');
         const k = Math.min(N_CLUSTERS, notes.length);
-        const { labels: clusterLabels } = kmeans(embeddings, k);
+        const [kmeansResult, pcaCoords] = await Promise.all([
+          kmeansAuto(embeddings, k),
+          Promise.resolve(pca3d(embeddings)),
+        ]);
+        const clusterLabels = kmeansResult.labels;
 
-        setBootStage('COMPUTING TOPOLOGY...', 'PCA');
-        await sleep(50);
-        const pcaCoords = pca3d(embeddings);
+        // Phase B: layouts + distMatrix (all independent)
+        setBootStage('COMPUTING TOPOLOGY...', 'LAYOUTS + DISTANCE MATRIX');
+        const [central, decentral, distrib, distMatrix] = await Promise.all([
+          Promise.resolve(computeCentralizedLayout(embeddings, pcaCoords)),
+          Promise.resolve(computeDecentralizedLayout(embeddings, clusterLabels, k)),
+          computeDistributedLayoutAuto(embeddings, K_NEIGHBORS),
+          cosineDistanceMatrixAuto(embeddings),
+        ]);
 
-        setBootStage('COMPUTING TOPOLOGY...', 'CENTRALIZED LAYOUT');
-        await sleep(50);
-        const central = computeCentralizedLayout(embeddings, pcaCoords);
-
-        setBootStage('COMPUTING TOPOLOGY...', 'DECENTRALIZED LAYOUT');
-        await sleep(50);
-        const decentral = computeDecentralizedLayout(embeddings, clusterLabels, k);
-
-        setBootStage('COMPUTING TOPOLOGY...', 'UMAP');
-        await sleep(50);
-        const distrib = computeDistributedLayout(embeddings, K_NEIGHBORS);
-
+        // Phase C: knn needs distMatrix
         setBootStage('COMPUTING TOPOLOGY...', 'K-NN EDGES');
-        await sleep(50);
-        const distMatrix = cosineDistanceMatrix(embeddings);
         const edges = knnEdges(distMatrix, K_NEIGHBORS);
+        console.log(`Stage 3 (topology): ${((performance.now() - t3) / 1000).toFixed(1)}s`);
 
         // ── Compute topology-specific edge sets ──
 
@@ -2144,35 +2902,49 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
 
         // Initialize graph with white/uncolored nodes (no annotations yet)
         setBootStage('COMPUTING TOPOLOGY...', 'INITIALIZING GRAPH');
-        await sleep(50);
-        initGraph(graphNodes, []);
+        await initGraph(graphNodes, []);
 
         // ── STAGE 4: ANNOTATING ──
-        setBootStage('ANNOTATING...', 'CENTER NOMINATION');
-        const llmCenterIdx = await nominateCenter(notes, apiKey);
+        const t4 = performance.now();
+
+        // Phase A: nominateCenter + nameClusters in parallel
+        setBootStage('ANNOTATING...', 'CENTER + CLUSTER NAMES');
+        const [llmCenterIdx, clusterNames] = await Promise.all([
+          nominateCenter(notes, apiKey),
+          nameClusters(notes, clusterLabels, k, apiKey),
+        ]);
         graphNodes.forEach(n => {
           n.is_llm_center = n.id === llmCenterIdx ? 1 : 0;
-        });
-
-        setBootStage('ANNOTATING...', 'CLUSTER NAMES');
-        const clusterNames = await nameClusters(notes, clusterLabels, k, apiKey);
-        graphNodes.forEach(n => {
           n.cluster_name = clusterNames[n.cluster_id] || `Cluster ${n.cluster_id}`;
         });
 
         // Update graph with cluster colors and names (refresh node objects for LLM center decoration)
         updateGraphData(graphNodes, [], true);
 
-        // Progressive edge labeling — batch in the pipeline for incremental reveal
+        // Phase B: Progressive edge labeling with concurrent batches (×3)
+        const LABEL_CONCURRENCY = 3;
         const labeledEdges = [];
+        const edgeBatches = [];
         for (let i = 0; i < edges.length; i += EDGE_LABEL_BATCH) {
-          const batchEdges = edges.slice(i, i + EDGE_LABEL_BATCH);
-          const batchResult = await labelEdges(notes, batchEdges, apiKey);
-          labeledEdges.push(...batchResult);
-          setBootStage('ANNOTATING...', `EDGE LABELS ${Math.min(i + EDGE_LABEL_BATCH, edges.length)}/${edges.length}`);
-          // Show progressive edges during labeling
-          updateGraphData(graphNodes, [...centralEdges, ...decentralEdges, ...labeledEdges]);
+          edgeBatches.push(edges.slice(i, i + EDGE_LABEL_BATCH));
         }
+
+        const executing = new Set();
+        let batchesDone = 0;
+        for (let i = 0; i < edgeBatches.length; i++) {
+          const batch = edgeBatches[i];
+          const p = labelEdges(notes, batch, apiKey).then(result => {
+            labeledEdges.push(...result);
+            batchesDone++;
+            setBootStage('ANNOTATING...', `EDGE LABELS ${Math.min(batchesDone * EDGE_LABEL_BATCH, edges.length)}/${edges.length}`);
+            updateGraphData(graphNodes, [...centralEdges, ...decentralEdges, ...labeledEdges]);
+            executing.delete(p);
+          });
+          executing.add(p);
+          if (executing.size >= LABEL_CONCURRENCY) await Promise.race(executing);
+        }
+        await Promise.all(executing);
+        console.log(`Stage 4 (annotating): ${((performance.now() - t4) / 1000).toFixed(1)}s`);
 
         // Store edge sets for readout counts; combine all for the graph
         edgeSets = { central: centralEdges, decentral: decentralEdges, distrib: labeledEdges };
@@ -2223,7 +2995,9 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
           setBootStage(`SCOPE ONLINE // ${notes.length} NODES // CACHE SAVE FAILED`, cacheErr.message);
         }
 
-        setBootStage(`SCOPE ONLINE // ${notes.length} NODES // ${labeledEdges.length} EDGES`, '');
+        const totalTime = ((performance.now() - t0) / 1000).toFixed(1);
+        console.log(`Pipeline total: ${totalTime}s`);
+        setBootStage(`SCOPE ONLINE // ${notes.length} NODES // ${labeledEdges.length} EDGES // ${totalTime}s`, '');
         setTimeout(hideBootStatus, 2000);
 
       } catch (err) {
@@ -2238,6 +3012,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
 
     let Graph;
     let bloomPass;
+    let gpuSim = null;
     let currentLayout = 'central';
     let hoverNode = null;
     let selectedNode = null;
@@ -2246,6 +3021,8 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
     let nodeById = {};
     let allNodes = [];
     let edgeSets = { central: [], decentral: [], distrib: [] };
+    let isExternalGraph = false;
+    let externalGraphMeta = null;
 
     // ── Lookup builders ──
 
@@ -2308,12 +3085,12 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
     function getNodeColor(node) {
       const color = CLUSTER_COLORS[node.cluster_id % CLUSTER_COLORS.length];
       if (hoverNode) {
-        if (node === hoverNode) return '#ffffff';
+        if (node === hoverNode) return '#000000';
         if (neighborSets[hoverNode.id]?.has(node.id)) return color;
         return darken(color, 0.3);
       }
       if (selectedNode) {
-        if (node === selectedNode) return '#ffffff';
+        if (node === selectedNode) return '#000000';
         if (neighborSets[selectedNode.id]?.has(node.id)) return color;
         return darken(color, 0.1);
       }
@@ -2354,12 +3131,18 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
     // ── Tooltip builders ──
 
     function buildNodeTooltip(node) {
+      if (isExternalGraph) {
+        return `<div style="text-align:center;font-family:monospace;">`
+          + `<div style="font-weight:600;">${escapeHtml(node.name)}</div>`
+          + `<div style="color:#888888;font-size:11px;">${escapeHtml(node._tag || '')} / ${escapeHtml(node.cluster_name || '')}</div>`
+          + '</div>';
+      }
       const markers = [];
-      if (node.is_medoid) markers.push('<span style="color:#ef4444;font-size:10px;">MEDOID</span>');
-      if (node.is_llm_center) markers.push('<span style="color:#fb923c;font-size:10px;">LLM.CENTER</span>');
+      if (node.is_medoid) markers.push('<span style="color:#222222;font-size:10px;">MEDOID</span>');
+      if (node.is_llm_center) markers.push('<span style="color:#666666;font-size:10px;">LLM.CENTER</span>');
       return `<div style="text-align:center;font-family:monospace;">`
         + `<div style="font-weight:600;">${escapeHtml(node.name)}</div>`
-        + `<div style="color:#4a6a8a;font-size:11px;">${escapeHtml(node.cluster_name || '')}</div>`
+        + `<div style="color:#888888;font-size:11px;">${escapeHtml(node.cluster_name || '')}</div>`
         + (markers.length ? `<div style="margin-top:3px;">${markers.join(' ')}</div>` : '')
         + '</div>';
     }
@@ -2370,9 +3153,9 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       if (!s || !t) return '';
       return `<div style="max-width:300px;font-family:monospace;">`
         + `<div>${escapeHtml(s.name)} → ${escapeHtml(t.name)}</div>`
-        + `<div style="color:#4a6a8a;font-style:italic;">${escapeHtml(link.label_forward || '')}</div>`
+        + `<div style="color:#888888;font-style:italic;">${escapeHtml(link.label_forward || '')}</div>`
         + `<div style="margin-top:6px;">${escapeHtml(t.name)} → ${escapeHtml(s.name)}</div>`
-        + `<div style="color:#4a6a8a;font-style:italic;">${escapeHtml(link.label_backward || '')}</div>`
+        + `<div style="color:#888888;font-style:italic;">${escapeHtml(link.label_backward || '')}</div>`
         + '</div>';
     }
 
@@ -2508,35 +3291,81 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       const card = document.getElementById('detail-card');
       const resize = document.getElementById('panel-resize');
 
-      // Title
-      let title = escapeHtml(node.name);
-      if (node.is_medoid) title += ' <span class="marker medoid">MEDOID</span>';
-      if (node.is_llm_center) title += ' <span class="marker llm-center">LLM.CENTER</span>';
-      document.getElementById('card-title').innerHTML = title;
+      if (isExternalGraph) {
+        // Title: tag::label
+        document.getElementById('card-title').innerHTML =
+          `<span style="opacity:0.5">${escapeHtml(node._tag || '')}::</span>${escapeHtml(node.name)}`;
 
-      // Cluster
-      const color = CLUSTER_COLORS[node.cluster_id % CLUSTER_COLORS.length];
-      document.getElementById('card-cluster').innerHTML =
-        `<span class="cluster-badge" style="border-color:${color};color:${color};">${escapeHtml(node.cluster_name)}</span>`;
+        // Cluster badge: domain
+        const color = CLUSTER_COLORS[node.cluster_id % CLUSTER_COLORS.length];
+        document.getElementById('card-cluster').innerHTML =
+          `<span class="cluster-badge" style="border-color:${color};color:${color};">${escapeHtml(node.cluster_name)}</span>`;
 
-      // Parse frontmatter and body
-      const { meta, body } = parseFrontmatter(node.text_preview || '');
+        // Meta: tag, domain, schema info or vis.js tooltip properties
+        let metaHtml = `<div class="info-row"><span class="info-key">TYPE</span><span class="info-val">${escapeHtml(node._tag || '')}</span></div>`;
+        metaHtml += `<div class="info-row"><span class="info-key">DOMAIN</span><span class="info-val">${escapeHtml(node._domain || '')}</span></div>`;
+        const schema = externalGraphMeta?.TAG_SCHEMA?.[node._tag];
+        if (schema) {
+          if (schema.table) metaHtml += `<div class="info-row"><span class="info-key">TABLE</span><span class="info-val">${escapeHtml(schema.table)}</span></div>`;
+          if (schema.rows != null) metaHtml += `<div class="info-row"><span class="info-key">ROWS</span><span class="info-val">${schema.rows.toLocaleString()}</span></div>`;
+          if (schema.attrs) {
+            const attrNames = schema.attrs.map(a => a.name).join(', ');
+            metaHtml += `<div class="info-row"><span class="info-key">ATTRS</span><span class="info-val" style="font-size:10px;word-break:break-all">${escapeHtml(attrNames)}</span></div>`;
+          }
+        }
+        document.getElementById('card-meta').innerHTML = metaHtml;
 
-      // Metadata
-      document.getElementById('card-meta').innerHTML = renderMeta(meta);
+        // Show vis.js tooltip properties as preview if available
+        if (node._tooltip) {
+          // Parse HTML-encoded tooltip: "<b>Type</b><br>Key: Value<br>..."
+          const tmp = document.createElement('div');
+          tmp.innerHTML = node._tooltip;
+          const text = tmp.textContent || '';
+          // Skip first two lines (type + ID) since we already show them
+          const propLines = text.split('\n').filter(l => l.includes(':')).slice(2);
+          document.getElementById('card-preview').innerHTML =
+            '<div style="font-size:11px;line-height:1.6;opacity:0.8">'
+            + propLines.map(l => escapeHtml(l.trim())).join('<br>')
+            + '</div>';
+        } else {
+          document.getElementById('card-preview').textContent = '';
+        }
 
-      // Body preview
-      document.getElementById('card-preview').textContent = body || '(no content)';
+        // Connections with edge type
+        const edges = adjacency[node.id] || [];
+        let html = `<div class="conn-header">CONNECTIONS (${edges.length})</div>`;
+        edges.forEach(e => {
+          const target = nodeById[e.id];
+          if (!target) return;
+          const targetLabel = (target._tag || '') + '::' + (target.name || '');
+          html += `<div class="conn-item"><div class="conn-edge"><span class="arrow">── </span><span class="label">${escapeHtml(e.label)}</span><span class="arrow"> ──▸</span></div><div class="conn-name" data-node-id="${target.id}">${escapeHtml(targetLabel)}</div></div>`;
+        });
+        document.getElementById('card-connections').innerHTML = html;
 
-      // Connections
-      const edges = adjacency[node.id] || [];
-      let html = `<div class="conn-header">CONNECTIONS (${edges.length})</div>`;
-      edges.forEach(e => {
-        const target = nodeById[e.id];
-        if (!target) return;
-        html += `<div class="conn-item"><div class="conn-edge"><span class="arrow">── </span><span class="label">${escapeHtml(e.label)}</span><span class="arrow"> ──▸</span></div><div class="conn-name" data-node-id="${target.id}">${escapeHtml(target.name)}</div></div>`;
-      });
-      document.getElementById('card-connections').innerHTML = html;
+      } else {
+        // Notes pipeline detail card
+        let title = escapeHtml(node.name);
+        if (node.is_medoid) title += ' <span class="marker medoid">MEDOID</span>';
+        if (node.is_llm_center) title += ' <span class="marker llm-center">LLM.CENTER</span>';
+        document.getElementById('card-title').innerHTML = title;
+
+        const color = CLUSTER_COLORS[node.cluster_id % CLUSTER_COLORS.length];
+        document.getElementById('card-cluster').innerHTML =
+          `<span class="cluster-badge" style="border-color:${color};color:${color};">${escapeHtml(node.cluster_name)}</span>`;
+
+        const { meta, body } = parseFrontmatter(node.text_preview || '');
+        document.getElementById('card-meta').innerHTML = renderMeta(meta);
+        document.getElementById('card-preview').textContent = body || '(no content)';
+
+        const edges = adjacency[node.id] || [];
+        let html = `<div class="conn-header">CONNECTIONS (${edges.length})</div>`;
+        edges.forEach(e => {
+          const target = nodeById[e.id];
+          if (!target) return;
+          html += `<div class="conn-item"><div class="conn-edge"><span class="arrow">── </span><span class="label">${escapeHtml(e.label)}</span><span class="arrow"> ──▸</span></div><div class="conn-name" data-node-id="${target.id}">${escapeHtml(target.name)}</div></div>`;
+        });
+        document.getElementById('card-connections').innerHTML = html;
+      }
 
       card.classList.add('visible');
       resize.style.display = 'block';
@@ -2605,7 +3434,8 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
     document.getElementById('card-connections').addEventListener('click', e => {
       const nameEl = e.target.closest('.conn-name');
       if (!nameEl) return;
-      const id = parseInt(nameEl.dataset.nodeId);
+      const rawId = nameEl.dataset.nodeId;
+      const id = isExternalGraph ? rawId : parseInt(rawId);
       const node = nodeById[id];
       if (!node) return;
       handleNodeClick(node);
@@ -2617,9 +3447,395 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       }
     });
 
+    // ── GPU Force Simulation (WGSL compute shaders) ──
+
+    const WGSL_PARAMS_STRUCT = `
+struct SimParams {
+  nodeCount: u32,
+  edgeCount: u32,
+  chargeStrength: f32,
+  linkStrength: f32,
+  linkDistance: f32,
+  positionStrength: f32,
+  damping: f32,
+  dt: f32,
+};`;
+
+    const TILE_SIZE = 256;
+    const WGSL_CHARGE = WGSL_PARAMS_STRUCT + `
+const TILE = ${TILE_SIZE}u;
+var<workgroup> tile: array<vec4f, ${TILE_SIZE}>;
+
+@group(0) @binding(0) var<storage, read> positions: array<vec4f>;
+@group(0) @binding(1) var<storage, read_write> velocities: array<vec4f>;
+@group(0) @binding(2) var<uniform> params: SimParams;
+
+@compute @workgroup_size(${TILE_SIZE})
+fn main(@builtin(global_invocation_id) gid: vec3u,
+        @builtin(local_invocation_id) lid: vec3u) {
+  let i = gid.x;
+  let li = lid.x;
+  let pi = select(vec3f(0.0), positions[i].xyz, i < params.nodeCount);
+  var force = vec3f(0.0);
+  let numTiles = (params.nodeCount + TILE - 1u) / TILE;
+
+  for (var t = 0u; t < numTiles; t = t + 1u) {
+    let j = t * TILE + li;
+    tile[li] = select(vec4f(0.0, 0.0, 0.0, -1.0), positions[j], j < params.nodeCount);
+    workgroupBarrier();
+
+    for (var k = 0u; k < TILE; k = k + 1u) {
+      let tj = t * TILE + k;
+      if (tj >= params.nodeCount || tj == i) { continue; }
+      let diff = pi - tile[k].xyz;
+      let dist = max(length(diff), 0.1);
+      force -= normalize(diff) * params.chargeStrength / (dist * dist);
+    }
+    workgroupBarrier();
+  }
+
+  if (i < params.nodeCount) {
+    velocities[i] = vec4f(velocities[i].xyz + force * params.dt, 0.0);
+  }
+}`;
+
+    // Link force: per-edge dispatch O(E), accumulates via atomicAdd (fixed-point i32)
+    const LINK_FP_SCALE = 1024.0; // fixed-point precision for atomic accumulation
+    const WGSL_LINK_SCATTER = WGSL_PARAMS_STRUCT + `
+const FP_SCALE: f32 = ${LINK_FP_SCALE};
+
+@group(0) @binding(0) var<storage, read> positions: array<vec4f>;
+@group(0) @binding(1) var<storage, read_write> forceAccum: array<atomic<i32>>;
+@group(0) @binding(2) var<storage, read> edges: array<vec2u>;
+@group(0) @binding(3) var<uniform> params: SimParams;
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let e = gid.x;
+  if (e >= params.edgeCount) { return; }
+  let src = edges[e].x;
+  let tgt = edges[e].y;
+  let diff = positions[tgt].xyz - positions[src].xyz;
+  let dist = max(length(diff), 0.01);
+  let displacement = dist - params.linkDistance;
+  let f = normalize(diff) * displacement * params.linkStrength;
+  let fi = vec3i(f * FP_SCALE);
+  // Accumulate on source (positive direction)
+  atomicAdd(&forceAccum[src * 3u + 0u], fi.x);
+  atomicAdd(&forceAccum[src * 3u + 1u], fi.y);
+  atomicAdd(&forceAccum[src * 3u + 2u], fi.z);
+  // Accumulate on target (negative direction)
+  atomicAdd(&forceAccum[tgt * 3u + 0u], -fi.x);
+  atomicAdd(&forceAccum[tgt * 3u + 1u], -fi.y);
+  atomicAdd(&forceAccum[tgt * 3u + 2u], -fi.z);
+}`;
+
+    const WGSL_LINK_GATHER = WGSL_PARAMS_STRUCT + `
+const FP_SCALE: f32 = ${LINK_FP_SCALE};
+
+@group(0) @binding(0) var<storage, read_write> velocities: array<vec4f>;
+@group(0) @binding(1) var<storage, read_write> forceAccum: array<atomic<i32>>;
+@group(0) @binding(2) var<uniform> params: SimParams;
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= params.nodeCount) { return; }
+  let fx = f32(atomicExchange(&forceAccum[i * 3u + 0u], 0)) / FP_SCALE;
+  let fy = f32(atomicExchange(&forceAccum[i * 3u + 1u], 0)) / FP_SCALE;
+  let fz = f32(atomicExchange(&forceAccum[i * 3u + 2u], 0)) / FP_SCALE;
+  velocities[i] = vec4f(velocities[i].xyz + vec3f(fx, fy, fz) * params.dt, 0.0);
+}`;
+
+    const WGSL_POSITION = WGSL_PARAMS_STRUCT + `
+@group(0) @binding(0) var<storage, read> positions: array<vec4f>;
+@group(0) @binding(1) var<storage, read_write> velocities: array<vec4f>;
+@group(0) @binding(2) var<storage, read> targets: array<vec4f>;
+@group(0) @binding(3) var<uniform> params: SimParams;
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= params.nodeCount) { return; }
+  let diff = targets[i].xyz - positions[i].xyz;
+  velocities[i] = vec4f(velocities[i].xyz + diff * params.positionStrength * params.dt, 0.0);
+}`;
+
+    const WGSL_INTEGRATE = WGSL_PARAMS_STRUCT + `
+@group(0) @binding(0) var<storage, read_write> positions: array<vec4f>;
+@group(0) @binding(1) var<storage, read_write> velocities: array<vec4f>;
+@group(0) @binding(2) var<uniform> params: SimParams;
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= params.nodeCount) { return; }
+  let vel = velocities[i].xyz * params.damping;
+  let pos = positions[i].xyz + vel;
+  positions[i] = vec4f(pos, 0.0);
+  velocities[i] = vec4f(vel, 0.0);
+}`;
+
+    class GPUForceSimulation {
+      constructor(device, nodes, edges, layoutKey, scale) {
+        this.device = device;
+        this.nodes = nodes;
+        this.nodeCount = nodes.length;
+        this.edgeCount = edges.length;
+        this.scale = scale;
+        this.positions = new Float32Array(this.nodeCount * 3);
+        this._disposed = false;
+
+        // Initialize positions from nodes
+        nodes.forEach((n, i) => {
+          this.positions[i * 3] = n.x || 0;
+          this.positions[i * 3 + 1] = n.y || 0;
+          this.positions[i * 3 + 2] = n.z || 0;
+        });
+
+        // Build edge index array
+        const nodeIdToIdx = new Map();
+        nodes.forEach((n, i) => nodeIdToIdx.set(n.id, i));
+        const edgeIndices = new Uint32Array(Math.max(edges.length * 2, 2));
+        edges.forEach((e, i) => {
+          const src = typeof e.source === 'object' ? e.source.id : e.source;
+          const tgt = typeof e.target === 'object' ? e.target.id : e.target;
+          edgeIndices[i * 2] = nodeIdToIdx.get(src) || 0;
+          edgeIndices[i * 2 + 1] = nodeIdToIdx.get(tgt) || 0;
+        });
+
+        // Create GPU buffers (vec4f = 16 bytes per element)
+        const posData = new Float32Array(this.nodeCount * 4);
+        nodes.forEach((n, i) => {
+          posData[i * 4] = n.x || 0;
+          posData[i * 4 + 1] = n.y || 0;
+          posData[i * 4 + 2] = n.z || 0;
+        });
+
+        this.posBuffer = this._createStorageBuffer(posData, true);
+        this.velBuffer = this._createStorageBuffer(new Float32Array(this.nodeCount * 4), false);
+        this.targetBuffer = this._createStorageBuffer(new Float32Array(this.nodeCount * 4), false, true);
+        this.edgeBuffer = this._createStorageBufferU32(edgeIndices);
+
+        // Atomic force accumulator for link scatter/gather (i32 x 3 per node)
+        this.forceAccumBuffer = device.createBuffer({
+          size: this.nodeCount * 3 * 4,
+          usage: GPUBufferUsage.STORAGE,
+          mappedAtCreation: true,
+        });
+        new Int32Array(this.forceAccumBuffer.getMappedRange()).fill(0);
+        this.forceAccumBuffer.unmap();
+
+        // Params uniform (8 x float32 = 32 bytes)
+        this.params = {
+          nodeCount: this.nodeCount,
+          edgeCount: this.edgeCount,
+          chargeStrength: -25,
+          linkStrength: 0.008,
+          linkDistance: 100,
+          positionStrength: 0.18,
+          damping: 0.6,
+          dt: 0.02,
+        };
+        this.paramsBuffer = device.createBuffer({
+          size: 32,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+        this._writeParams();
+
+        // Read buffer
+        this.readBuffer = device.createBuffer({
+          size: this.nodeCount * 4 * 4,
+          usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+        });
+
+        this._createPipelines();
+        this.setTargets(layoutKey);
+      }
+
+      _createStorageBuffer(data, copySrc = false, copyDst = false) {
+        let usage = GPUBufferUsage.STORAGE;
+        if (copySrc) usage |= GPUBufferUsage.COPY_SRC;
+        if (copyDst) usage |= GPUBufferUsage.COPY_DST;
+        const buf = this.device.createBuffer({
+          size: data.byteLength,
+          usage,
+          mappedAtCreation: true,
+        });
+        new Float32Array(buf.getMappedRange()).set(data);
+        buf.unmap();
+        return buf;
+      }
+
+      _createStorageBufferU32(data) {
+        const buf = this.device.createBuffer({
+          size: data.byteLength,
+          usage: GPUBufferUsage.STORAGE,
+          mappedAtCreation: true,
+        });
+        new Uint32Array(buf.getMappedRange()).set(data);
+        buf.unmap();
+        return buf;
+      }
+
+      _writeParams() {
+        const ab = new ArrayBuffer(32);
+        new Uint32Array(ab, 0, 2).set([this.params.nodeCount, this.params.edgeCount]);
+        new Float32Array(ab, 8, 6).set([
+          this.params.chargeStrength, this.params.linkStrength,
+          this.params.linkDistance, this.params.positionStrength,
+          this.params.damping, this.params.dt,
+        ]);
+        this.device.queue.writeBuffer(this.paramsBuffer, 0, ab);
+      }
+
+      _createPipelines() {
+        const dev = this.device;
+        const makePipeline = (code) => {
+          const module = dev.createShaderModule({ code });
+          return dev.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'main' } });
+        };
+
+        this.chargePipeline = makePipeline(WGSL_CHARGE);
+        this.linkScatterPipeline = makePipeline(WGSL_LINK_SCATTER);
+        this.linkGatherPipeline = makePipeline(WGSL_LINK_GATHER);
+        this.posPipeline = makePipeline(WGSL_POSITION);
+        this.integratePipeline = makePipeline(WGSL_INTEGRATE);
+
+        // Bind groups
+        this.chargeBindGroup = dev.createBindGroup({
+          layout: this.chargePipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: { buffer: this.posBuffer } },
+            { binding: 1, resource: { buffer: this.velBuffer } },
+            { binding: 2, resource: { buffer: this.paramsBuffer } },
+          ],
+        });
+
+        this.linkScatterBindGroup = dev.createBindGroup({
+          layout: this.linkScatterPipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: { buffer: this.posBuffer } },
+            { binding: 1, resource: { buffer: this.forceAccumBuffer } },
+            { binding: 2, resource: { buffer: this.edgeBuffer } },
+            { binding: 3, resource: { buffer: this.paramsBuffer } },
+          ],
+        });
+
+        this.linkGatherBindGroup = dev.createBindGroup({
+          layout: this.linkGatherPipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: { buffer: this.velBuffer } },
+            { binding: 1, resource: { buffer: this.forceAccumBuffer } },
+            { binding: 2, resource: { buffer: this.paramsBuffer } },
+          ],
+        });
+
+        this.posBindGroup = dev.createBindGroup({
+          layout: this.posPipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: { buffer: this.posBuffer } },
+            { binding: 1, resource: { buffer: this.velBuffer } },
+            { binding: 2, resource: { buffer: this.targetBuffer } },
+            { binding: 3, resource: { buffer: this.paramsBuffer } },
+          ],
+        });
+
+        this.integrateBindGroup = dev.createBindGroup({
+          layout: this.integratePipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: { buffer: this.posBuffer } },
+            { binding: 1, resource: { buffer: this.velBuffer } },
+            { binding: 2, resource: { buffer: this.paramsBuffer } },
+          ],
+        });
+      }
+
+      setTargets(layoutKey) {
+        const targets = new Float32Array(this.nodeCount * 4);
+        this.nodes.forEach((n, i) => {
+          targets[i * 4] = (n['x_' + layoutKey] || 0) * this.scale;
+          targets[i * 4 + 1] = (n['y_' + layoutKey] || 0) * this.scale;
+          targets[i * 4 + 2] = (n['z_' + layoutKey] || 0) * this.scale;
+        });
+        this.device.queue.writeBuffer(this.targetBuffer, 0, targets);
+      }
+
+      setChargeStrength(s) { this.params.chargeStrength = s; this._writeParams(); }
+      setLinkStrength(s, dist) {
+        this.params.linkStrength = s;
+        if (dist !== undefined) this.params.linkDistance = dist;
+        this._writeParams();
+      }
+      setPositionStrength(s) { this.params.positionStrength = s; this._writeParams(); }
+
+      async tick() {
+        if (this._disposed) return;
+        const wg = Math.ceil(this.nodeCount / 256);
+        const encoder = this.device.createCommandEncoder();
+
+        const chargePass = encoder.beginComputePass();
+        chargePass.setPipeline(this.chargePipeline);
+        chargePass.setBindGroup(0, this.chargeBindGroup);
+        chargePass.dispatchWorkgroups(wg);
+        chargePass.end();
+
+        // Link force: scatter per-edge, then gather per-node
+        const linkScatter = encoder.beginComputePass();
+        linkScatter.setPipeline(this.linkScatterPipeline);
+        linkScatter.setBindGroup(0, this.linkScatterBindGroup);
+        linkScatter.dispatchWorkgroups(Math.ceil(this.edgeCount / 256));
+        linkScatter.end();
+
+        const linkGather = encoder.beginComputePass();
+        linkGather.setPipeline(this.linkGatherPipeline);
+        linkGather.setBindGroup(0, this.linkGatherBindGroup);
+        linkGather.dispatchWorkgroups(wg);
+        linkGather.end();
+
+        const posPass = encoder.beginComputePass();
+        posPass.setPipeline(this.posPipeline);
+        posPass.setBindGroup(0, this.posBindGroup);
+        posPass.dispatchWorkgroups(wg);
+        posPass.end();
+
+        const intPass = encoder.beginComputePass();
+        intPass.setPipeline(this.integratePipeline);
+        intPass.setBindGroup(0, this.integrateBindGroup);
+        intPass.dispatchWorkgroups(wg);
+        intPass.end();
+
+        encoder.copyBufferToBuffer(this.posBuffer, 0, this.readBuffer, 0, this.nodeCount * 4 * 4);
+        this.device.queue.submit([encoder.finish()]);
+
+        await this.readBuffer.mapAsync(GPUMapMode.READ);
+        const data = new Float32Array(this.readBuffer.getMappedRange());
+        for (let i = 0; i < this.nodeCount; i++) {
+          this.positions[i * 3] = data[i * 4];
+          this.positions[i * 3 + 1] = data[i * 4 + 1];
+          this.positions[i * 3 + 2] = data[i * 4 + 2];
+        }
+        this.readBuffer.unmap();
+      }
+
+      dispose() {
+        this._disposed = true;
+        this.posBuffer.destroy();
+        this.velBuffer.destroy();
+        this.targetBuffer.destroy();
+        this.edgeBuffer.destroy();
+        this.forceAccumBuffer.destroy();
+        this.paramsBuffer.destroy();
+        this.readBuffer.destroy();
+      }
+    }
+
     // ── initGraph ──
 
-    function initGraph(nodes, edges) {
+    async function initGraph(nodes, edges) {
+      // Dispose previous GPU simulation if any
+      if (gpuSim) { gpuSim.dispose(); gpuSim = null; }
+
       const links = edges.map(e => ({
         source: e.source,
         target: e.target,
@@ -2637,32 +3853,38 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         .graphData({ nodes, links })
         .backgroundColor(`rgba(${hexToRgb(VFX.bgColor.val)},${VFX.bgAlpha.val})`)
         .showNavInfo(false)
-        .warmupTicks(60)
-        .cooldownTicks(Infinity)
+        .warmupTicks(isExternalGraph ? 200 : 60)
+        .cooldownTicks(isExternalGraph ? 400 : Infinity)
         .nodeThreeObject(node => createNodeObject(node))
         .nodeThreeObjectExtend(false)
         .nodeLabel(node => buildNodeTooltip(node))
         .linkColor(link => getLinkColor(link))
-        .linkWidth(link => getLinkWidth(link))
+        .linkWidth(isExternalGraph ? 0.3 : (link => getLinkWidth(link)))
         .linkOpacity(1.0)
         .linkHoverPrecision(VFX.linkHoverPrec.val)
         .linkLabel(link => buildLinkTooltip(link))
-        .linkDirectionalParticles(VFX.particleCount.val)
+        .linkDirectionalParticles(isExternalGraph ? 0 : VFX.particleCount.val)
         .linkDirectionalParticleWidth(VFX.particleWidth.val)
         .linkDirectionalParticleSpeed(VFX.particleSpeed.val)
         .linkDirectionalParticleColor(() => `rgba(${hexToRgb(VFX.particleColor.val)},${VFX.particleAlpha.val})`)
-        .linkCurvature(VFX.linkCurvatureVal.val)
+        .linkCurvature(isExternalGraph ? 0 : VFX.linkCurvatureVal.val)
         .linkVisibility(link => link.topology === currentLayout)
         .onNodeClick(handleNodeClick)
         .onNodeHover(handleNodeHover)
         .onBackgroundClick(handleBackgroundClick);
 
-      // Custom position force
-      Graph
-        .d3Force('position', createPositionForce(0.18))
-        .d3Force('center', null);
-      Graph.d3Force('link').strength(0.008).distance(100);
-      Graph.d3Force('charge').strength(-25);
+      // Force configuration
+      if (isExternalGraph) {
+        // Keep default center force (already set by ForceGraph3D)
+        Graph.d3Force('charge').strength(-8);
+        Graph.d3Force('link').distance(60).strength(0.02);
+      } else {
+        Graph
+          .d3Force('position', createPositionForce(0.18))
+          .d3Force('center', null);
+        Graph.d3Force('link').strength(0.008).distance(100);
+        Graph.d3Force('charge').strength(-25);
+      }
 
       // CSS2D overlay for constant-size node labels
       const graphEl = document.getElementById('graph');
@@ -2687,18 +3909,93 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         css2d.setSize(w, h);
       });
 
-      // Post-processing bloom
-      const renderer = Graph.renderer();
-      const composer = new EffectComposer(renderer);
-      composer.addPass(new RenderPass(Graph.scene(), Graph.camera()));
-      bloomPass = new UnrealBloomPass(
-        new THREE.Vector2(graphEl.clientWidth, graphEl.clientHeight),
-        VFX.bloomStrength.val,
-        VFX.bloomRadius.val,
-        VFX.bloomThreshold.val
-      );
-      composer.addPass(bloomPass);
-      Graph.postProcessingComposer(composer);
+      // Post-processing bloom (dual-path: WebGPU TSL or WebGL legacy)
+      if (gpuAvailable) {
+        // Create WebGPU renderer and overlay it
+        const glRenderer = Graph.renderer();
+        const gpuRenderer = new WebGPURenderer({ antialias: true });
+        await gpuRenderer.init();
+        gpuRenderer.setSize(graphEl.clientWidth, graphEl.clientHeight);
+        gpuRenderer.setPixelRatio(window.devicePixelRatio);
+
+        const gpuCanvas = gpuRenderer.domElement;
+        gpuCanvas.style.position = 'absolute';
+        gpuCanvas.style.top = '0';
+        gpuCanvas.style.left = '0';
+        gpuCanvas.style.pointerEvents = 'none';
+        graphEl.insertBefore(gpuCanvas, graphEl.firstChild);
+
+        // Make WebGL canvas transparent (keeps events/controls working)
+        glRenderer.domElement.style.opacity = '0';
+
+        // TSL post-processing
+        const postProcessing = new bloomModule.PostProcessing(gpuRenderer);
+        const scenePass = bloomModule.pass(Graph.scene(), Graph.camera());
+        bloomPass = bloomModule.bloom(scenePass.getTextureNode('output'));
+        bloomPass.threshold.value = VFX.bloomThreshold.val;
+        bloomPass.strength.value = VFX.bloomStrength.val;
+        bloomPass.radius.value = VFX.bloomRadius.val;
+        postProcessing.outputNode = bloomPass;
+
+        Graph.postProcessingComposer({ render: () => postProcessing.render() });
+
+        // Sync resize for WebGPU renderer
+        const origSetSize = glRenderer.setSize.bind(glRenderer);
+        glRenderer.setSize = (w, h, updateStyle) => {
+          origSetSize(w, h, updateStyle);
+          gpuRenderer.setSize(w, h);
+        };
+      } else {
+        const renderer = Graph.renderer();
+        const composer = new bloomModule.EffectComposer(renderer);
+        composer.addPass(new bloomModule.RenderPass(Graph.scene(), Graph.camera()));
+        bloomPass = new bloomModule.UnrealBloomPass(
+          new THREE.Vector2(graphEl.clientWidth, graphEl.clientHeight),
+          VFX.bloomStrength.val,
+          VFX.bloomRadius.val,
+          VFX.bloomThreshold.val
+        );
+        composer.addPass(bloomPass);
+        Graph.postProcessingComposer(composer);
+      }
+
+      // GPU compute force simulation (replaces d3-force when available)
+      if (gpuAvailable && !isExternalGraph) {
+        Graph.cooldownTicks(0);
+        Graph.d3Force('charge', null);
+        Graph.d3Force('link', null);
+        Graph.d3Force('center', null);
+        Graph.d3Force('position', null);
+
+        const activeEdges = edges.filter(e => e.topology === currentLayout);
+        gpuSim = new GPUForceSimulation(gpuDevice, nodes, activeEdges, currentLayout, SCALE);
+        gpuSim.setChargeStrength(-25);
+        gpuSim.setLinkStrength(0.008, 100);
+
+        (function gpuTick() {
+          if (!gpuSim || gpuSim._disposed) return;
+          gpuSim.tick().then(() => {
+            if (!gpuSim || gpuSim._disposed || !Graph) return;
+            const gNodes = Graph.graphData().nodes;
+            for (let i = 0; i < gNodes.length; i++) {
+              gNodes[i].x = gpuSim.positions[i * 3];
+              gNodes[i].y = gpuSim.positions[i * 3 + 1];
+              gNodes[i].z = gpuSim.positions[i * 3 + 2];
+              if (gNodes[i].__threeObj) {
+                gNodes[i].__threeObj.position.set(
+                  gpuSim.positions[i * 3],
+                  gpuSim.positions[i * 3 + 1],
+                  gpuSim.positions[i * 3 + 2]
+                );
+              }
+            }
+            Graph.refresh();
+            requestAnimationFrame(gpuTick);
+          }).catch(err => {
+            console.warn('GPU sim tick error:', err);
+          });
+        })();
+      }
 
       // Set initial camera to the "H" recenter position
       Graph.cameraPosition({ x: 0, y: 0, z: SCALE * 2.5 }, { x: 0, y: 0, z: 0 });
@@ -2743,11 +4040,18 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
           Graph.linkVisibility(link => link.topology === currentLayout);
           rebuildLookups(allNodes, activeEdges);
           buildReadouts(allNodes.length, activeEdges.length);
-          // Soften position force, reheat, then restore — smooth ~2s drift
-          const posForce = Graph.d3Force('position');
-          posForce.strength(0.03);
-          Graph.d3ReheatSimulation();
-          setTimeout(() => posForce.strength(0.18), 3000);
+          if (gpuSim) {
+            // Update GPU sim targets for new layout
+            gpuSim.setTargets(currentLayout);
+            gpuSim.setPositionStrength(0.03);
+            setTimeout(() => { if (gpuSim) gpuSim.setPositionStrength(0.18); }, 3000);
+          } else {
+            // Soften position force, reheat, then restore — smooth ~2s drift
+            const posForce = Graph.d3Force('position');
+            posForce.strength(0.03);
+            Graph.d3ReheatSimulation();
+            setTimeout(() => posForce.strength(0.18), 3000);
+          }
         }
       });
     });
@@ -2770,13 +4074,32 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         legend.appendChild(item);
       });
 
-      // Special markers
-      const special = document.createElement('div');
-      special.className = 'legend-special';
-      special.innerHTML =
-        '<div class="legend-item"><div class="legend-dot" style="border:2px solid #ef4444;background:transparent;"></div><span class="legend-label">EMBEDDING MEDOID</span></div>'
-        + '<div class="legend-item"><div class="legend-dot" style="border:2px solid #fb923c;background:transparent;"></div><span class="legend-label">LLM-NOMINATED CENTER</span></div>';
-      legend.appendChild(special);
+      if (isExternalGraph) {
+        // Edge type legend
+        const etCounts = externalGraphMeta?.EDGE_TYPE_COUNTS;
+        if (etCounts) {
+          const edgeSection = document.createElement('div');
+          edgeSection.className = 'legend-special';
+          edgeSection.innerHTML = '<div style="margin-bottom:4px;font-size:10px;opacity:0.5;letter-spacing:0.08em">EDGE TYPES</div>';
+          const sorted = Object.entries(etCounts).sort((a, b) => b[1] - a[1]);
+          sorted.forEach(([et, count]) => {
+            const item = document.createElement('div');
+            item.className = 'legend-item';
+            item.innerHTML = `<span class="legend-label" style="font-size:10px">${escapeHtml(et)}</span>`
+              + `<span style="margin-left:auto;opacity:0.4;font-size:10px">${count.toLocaleString()}</span>`;
+            edgeSection.appendChild(item);
+          });
+          legend.appendChild(edgeSection);
+        }
+      } else {
+        // Special markers for notes pipeline
+        const special = document.createElement('div');
+        special.className = 'legend-special';
+        special.innerHTML =
+          '<div class="legend-item"><div class="legend-dot" style="border:2px solid #222222;background:transparent;"></div><span class="legend-label">EMBEDDING MEDOID</span></div>'
+          + '<div class="legend-item"><div class="legend-dot" style="border:2px solid #666666;background:transparent;"></div><span class="legend-label">LLM-NOMINATED CENTER</span></div>';
+        legend.appendChild(special);
+      }
     }
 
     let clusterLabelEls = {};
@@ -2930,7 +4253,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
 
     // Onboarding steps
     const OB_STEPS = [
-      { id:'palm',  icon:'✋', verb:'ROTAR',    desc:'Abre toda la mano frente a la cámara y muévela de lado a lado. El grafo 3D girará siguiendo tu mano.' },
+      { id:'palm',  icon:'✋', verb:'ROTAR',    desc:'Mueve tu mano frente a la cámara de lado a lado. El grafo 3D girará siguiendo tu mano.' },
       { id:'point', icon:'☝️', verb:'EXPLORAR', desc:'Extiende solo el dedo índice (los demás cerrados) y apunta hacia un nodo. Mantén el dedo apuntando sobre el nodo hasta que se seleccione.' },
       { id:'zoom',  icon:'🤲', verb:'ZOOM',     desc:'Levanta ambas manos frente a la cámara. Acerca las manos para hacer zoom in, o aléjalas para zoom out.' },
       { id:'fist',  icon:'✊', verb:'RESET',    desc:'Cierra el puño completamente (todos los dedos cerrados) y sostenlo por 1 segundo para reiniciar la vista de la cámara.' },
@@ -2938,7 +4261,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
 
     // SVG hand illustrations for each onboarding step
     const OB_HAND_SVG = {
-      palm: `<svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" color="#cd6d13">
+      palm: `<svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" color="#555555">
         <path d="M50 95 L50 55"/>
         <path d="M42 95 L42 60 L42 28 Q42 22 46 22 Q50 22 50 28 L50 55"/>
         <path d="M50 28 L50 18 Q50 12 54 12 Q58 12 58 18 L58 55"/>
@@ -2947,7 +4270,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         <path d="M42 60 L42 38 Q42 32 38 32 Q34 32 34 38 L34 60 Q34 78 50 82 Q66 78 74 58"/>
         <circle cx="50" cy="55" r="26" stroke-dasharray="4 3" opacity="0.3"/>
       </svg>`,
-      point: `<svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" color="#cd6d13">
+      point: `<svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" color="#555555">
         <path d="M50 95 L50 58"/>
         <path d="M50 58 L50 10 Q50 5 54 5 Q58 5 58 10 L58 55" stroke-width="2.5"/>
         <path d="M58 58 L58 48 Q58 44 62 46 Q64 48 62 52 L58 58"/>
@@ -2956,7 +4279,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         <line x1="50" y1="5" x2="50" y2="-2" stroke-dasharray="3 2" opacity="0.5"/>
         <path d="M44 0 L50 -5 L56 0" fill="none" opacity="0.5"/>
       </svg>`,
-      zoom: `<svg viewBox="0 0 120 100" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" color="#cd6d13">
+      zoom: `<svg viewBox="0 0 120 100" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" color="#555555">
         <g transform="translate(10,10)">
           <path d="M22 80 L22 40 L22 18 Q22 12 26 12 Q30 12 30 18 L30 40"/>
           <path d="M30 18 Q30 12 34 12 Q38 12 38 18 L38 40"/>
@@ -2972,7 +4295,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         <path d="M52 50 L58 50 M55 47 L58 50 L55 53" opacity="0.5"/>
         <path d="M68 50 L62 50 M65 47 L62 50 L65 53" opacity="0.5"/>
       </svg>`,
-      fist: `<svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" color="#cd6d13">
+      fist: `<svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" color="#555555">
         <path d="M50 95 L50 70"/>
         <path d="M34 50 Q34 42 40 42 L60 42 Q66 42 66 50 L66 62 Q66 76 50 80 Q34 76 34 62 Z"/>
         <path d="M40 42 L40 38 Q40 34 44 34 Q48 34 48 38"/>
@@ -3040,11 +4363,11 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         (document.getElementById('ob-graph'))
         .graphData({ nodes: OB_MOCK_NODES, links: OB_MOCK_LINKS })
         .nodeLabel('name')
-        .nodeColor(() => '#cd6d13')
+        .nodeColor(() => '#333333')
         .nodeVal(8)
-        .linkColor(() => 'rgba(205,109,19,0.4)')
+        .linkColor(() => 'rgba(150,150,150,0.4)')
         .linkWidth(1)
-        .backgroundColor('#0a0a0f')
+        .backgroundColor('#ffffff')
         .width(window.innerWidth)
         .height(window.innerHeight);
       ob_camR = 500; ob_camPhi = 0; ob_camTheta = Math.PI / 2;
@@ -3146,7 +4469,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
 
       // ── Step 0 — palm: orbit mock graph, accumulate real rotation ──────
       if (obStep === 0) {
-        if (gesture === 'palm') {
+        if (gesture !== 'point') {
           if (ob_prevX !== null) {
             const dx = px - ob_prevX;
             const dy = py - ob_prevY;
@@ -3281,6 +4604,19 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
     let ht_zoomCooldown     = 0;    // frames to ignore after zoom ends
     const HT_ZOOM_COOLDOWN  = 10;   // ~330ms grace period after zoom
 
+    // Fist-still detection for reset
+    let ht_fistStillFrames = 0;
+    let ht_fistPrevX = null;
+    let ht_fistPrevY = null;
+    const HT_STILL_THRESHOLD = 0.012;
+
+    // Inertia system
+    let ht_velPhi = 0;
+    let ht_velTheta = 0;
+    const HT_INERTIA_FRICTION = 0.94;
+    const HT_INERTIA_MIN = 0.0005;
+    let ht_inertiaRAF = null;
+
     // Fix 2 — Hysteresis for finger extension detection
     const ht_extendedState = [false, false, false, false];
     const HT_EXTEND_MARGIN = 0.015;
@@ -3303,7 +4639,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
     let ob_wasTwoHands = false;
 
     // Fix 5 — EMA smoothing of landmarks
-    const HT_EMA_ALPHA = 0.45;
+    const HT_EMA_ALPHA = 0.65;
     let ht_emaState = { lm: null };
     let ob_emaState = { lm: null };
 
@@ -3318,6 +4654,31 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         { x: 0, y: 0, z: 0 },
         0
       );
+    }
+
+    function ht_drawSkeleton(lm) {
+      const canvas = document.getElementById('ht-canvas');
+      const ctx = canvas.getContext('2d');
+      drawConnectors(ctx, lm, HAND_CONNECTIONS,
+        { color: 'rgba(255,255,255,0.35)', lineWidth: 1 });
+      drawLandmarks(ctx, lm,
+        { color: '#00ff88', lineWidth: 0, radius: 2 });
+    }
+
+    function ht_inertiaLoop() {
+      if (Math.abs(ht_velPhi) > HT_INERTIA_MIN || Math.abs(ht_velTheta) > HT_INERTIA_MIN) {
+        ht_camPhi += ht_velPhi;
+        ht_camTheta += ht_velTheta;
+        ht_camTheta = Math.max(0.1, Math.min(Math.PI - 0.1, ht_camTheta));
+        ht_velPhi *= HT_INERTIA_FRICTION;
+        ht_velTheta *= HT_INERTIA_FRICTION;
+        ht_updateCamera();
+        ht_inertiaRAF = requestAnimationFrame(ht_inertiaLoop);
+      } else {
+        ht_velPhi = 0;
+        ht_velTheta = 0;
+        ht_inertiaRAF = null;
+      }
     }
 
     function ht_isExtended(lm, tip, pip, fingerIdx) {
@@ -3421,21 +4782,19 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
 
       const hands = results.multiHandLandmarks || [];
 
-      if (hands.length > 0) {
-        hands.forEach(lm => {
-          drawConnectors(ctx, lm, HAND_CONNECTIONS,
-            { color: 'rgba(255,255,255,0.35)', lineWidth: 1 });
-          drawLandmarks(ctx, lm,
-            { color: '#00ff88', lineWidth: 0, radius: 2 });
-        });
-      }
-
       // No hands
       if (hands.length === 0) {
+        // Start inertia if there was rotation velocity
+        if (ht_prevX !== null && (Math.abs(ht_velPhi) > HT_INERTIA_MIN || Math.abs(ht_velTheta) > HT_INERTIA_MIN)) {
+          if (!ht_inertiaRAF) ht_inertiaRAF = requestAnimationFrame(ht_inertiaLoop);
+        }
         ht_prevX = null; ht_prevY = null;
         ht_twoHandPrevDist = null;
         ht_pointFrames     = 0;
         ht_fistFrames      = 0;
+        ht_fistStillFrames = 0;
+        ht_fistPrevX       = null;
+        ht_fistPrevY       = null;
         ht_candidateNode   = null;
         ht_candidateFrames = 0;
         ob_fistFrames      = 0;
@@ -3470,6 +4829,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         }
         const rawLm   = hands[0];
         const lm      = ht_smoothLandmarks(rawLm, ob_emaState);
+        ht_drawSkeleton(lm);
         const rawGesture = ht_gesture(lm);
         const gesture    = ob_debouncedGesture(rawGesture);
         const px = 1 - lm[9].x;
@@ -3514,57 +4874,26 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
 
       const rawLm   = hands[0];
       const lm      = ht_smoothLandmarks(rawLm, ht_emaState);
+      ht_drawSkeleton(lm);
       const rawGesture = ht_gesture(lm);
       const gesture    = ht_debouncedGesture(rawGesture);
       // Mirror x so it feels like a mirror
       const px = 1 - lm[9].x;
       const py = lm[9].y;
 
-      // ── Fist → hold 1s to reset ────────────────────────────────────────────
-      if (gesture === 'fist') {
-        ht_prevX = null;
-        ht_pointFrames = 0;
-        ht_fistFrames++;
-        const pct = Math.min(1, ht_fistFrames / HT_FIST_FRAMES);
-        ht_setLabel(`RESET [${Math.round(pct * 100)}%]`);
-        if (ht_fistFrames >= HT_FIST_FRAMES) {
-          ht_fistFrames = 0;
-          ht_hoverNode  = null;
-          ht_camR = SCALE * 2.5; ht_camPhi = 0; ht_camTheta = Math.PI / 2;
-          ht_updateCamera();
-          if (Graph) handleNodeHover(null);
-          if (typeof hideDetailCard === 'function') hideDetailCard();
-          ht_setLabel('RESET');
-        }
-        return;
-      }
-      ht_fistFrames = 0;
-
-      // ── Palm → orbit camera ────────────────────────────────────────────────
-      if (gesture === 'palm') {
-        if (ht_prevX !== null) {
-          const dx = px - ht_prevX;
-          const dy = py - ht_prevY;
-          ht_camPhi   -= dx * 3.5;
-          ht_camTheta -= dy * 2.0;
-          ht_camTheta  = Math.max(0.1, Math.min(Math.PI - 0.1, ht_camTheta));
-          ht_updateCamera();
-        }
-        ht_prevX           = px;
-        ht_prevY           = py;
-        ht_pointFrames     = 0;
-        ht_candidateNode   = null;
-        ht_candidateFrames = 0;
-        ht_setLabel('ROTATE');
-        return;
-      }
-
-      // ── Point → hover / hold to select ────────────────────────────────────
+      // ── Point → hover / hold to select (highest priority) ────────────────
       if (gesture === 'point') {
+        // Stop inertia, reset rotation state
+        if (ht_inertiaRAF) { cancelAnimationFrame(ht_inertiaRAF); ht_inertiaRAF = null; }
+        ht_velPhi = 0; ht_velTheta = 0;
+        ht_prevX = null;
+        ht_fistFrames = 0;
+        ht_fistStillFrames = 0;
+        ht_fistPrevX = null; ht_fistPrevY = null;
+
         const fx = 1 - lm[8].x;
         const fy = lm[8].y;
         let nearest = ht_nearestNode(fx, fy);
-        ht_prevX = null;
 
         // Auto-select when entering point with no hover: pick the most camera-forward
         // node within a central screen region (smallest NDC z = closest to viewer)
@@ -3581,11 +4910,10 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
               if (v.z < bestZ) { bestZ = v.z; bestN = n; }
             }
           });
-          if (bestN) nearest = bestN; // feed into normal hover flow below
+          if (bestN) nearest = bestN;
         }
 
         if (nearest === ht_hoverNode) {
-          // Same node — clear candidate streak and accumulate for click
           ht_candidateNode   = null;
           ht_candidateFrames = 0;
           if (nearest) {
@@ -3599,7 +4927,6 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
             return;
           }
         } else {
-          // Different node — require HT_HOVER_FRAMES consecutive frames before committing
           if (nearest === ht_candidateNode) {
             ht_candidateFrames++;
           } else {
@@ -3619,15 +4946,85 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         return;
       }
 
-      ht_prevX           = null;
       ht_pointFrames     = 0;
       ht_candidateNode   = null;
       ht_candidateFrames = 0;
-      ht_setLabel('');
+
+      // ── Fist → check still vs moving ──────────────────────────────────────
+      if (gesture === 'fist') {
+        const fistDelta = (ht_fistPrevX !== null)
+          ? Math.abs(px - ht_fistPrevX) + Math.abs(py - ht_fistPrevY)
+          : 1; // first frame: treat as moving
+        ht_fistPrevX = px; ht_fistPrevY = py;
+
+        if (fistDelta < HT_STILL_THRESHOLD) {
+          // Fist is still → accumulate reset
+          ht_fistStillFrames++;
+          ht_fistFrames++;
+          // Start inertia when transitioning to still
+          if (ht_fistStillFrames === 1 && ht_prevX !== null &&
+              (Math.abs(ht_velPhi) > HT_INERTIA_MIN || Math.abs(ht_velTheta) > HT_INERTIA_MIN)) {
+            if (!ht_inertiaRAF) ht_inertiaRAF = requestAnimationFrame(ht_inertiaLoop);
+          }
+          ht_prevX = null;
+          const pct = Math.min(1, ht_fistFrames / HT_FIST_FRAMES);
+          ht_setLabel(`RESET [${Math.round(pct * 100)}%]`);
+          if (ht_fistFrames >= HT_FIST_FRAMES) {
+            if (ht_inertiaRAF) { cancelAnimationFrame(ht_inertiaRAF); ht_inertiaRAF = null; }
+            ht_velPhi = 0; ht_velTheta = 0;
+            ht_fistFrames = 0;
+            ht_fistStillFrames = 0;
+            ht_hoverNode  = null;
+            ht_camR = SCALE * 2.5; ht_camPhi = 0; ht_camTheta = Math.PI / 2;
+            ht_updateCamera();
+            if (Graph) handleNodeHover(null);
+            if (typeof hideDetailCard === 'function') hideDetailCard();
+            ht_setLabel('RESET');
+          }
+          return;
+        }
+        // Fist is moving → fall through to rotation
+        ht_fistStillFrames = 0;
+        ht_fistFrames = 0;
+      } else {
+        ht_fistFrames = 0;
+        ht_fistStillFrames = 0;
+        ht_fistPrevX = null; ht_fistPrevY = null;
+      }
+
+      // ── Any gesture (palm/fist-moving/other) → rotate ─────────────────────
+      // Cancel inertia — user is taking control
+      if (ht_inertiaRAF) { cancelAnimationFrame(ht_inertiaRAF); ht_inertiaRAF = null; }
+      if (ht_prevX !== null) {
+        const dx = px - ht_prevX;
+        const dy = py - ht_prevY;
+        ht_camPhi   -= dx * 3.5;
+        ht_camTheta -= dy * 2.0;
+        ht_camTheta  = Math.max(0.1, Math.min(Math.PI - 0.1, ht_camTheta));
+        const VEL_SMOOTH = 0.4;
+        ht_velPhi   = ht_velPhi   * VEL_SMOOTH + (-dx * 3.5) * (1 - VEL_SMOOTH);
+        ht_velTheta = ht_velTheta * VEL_SMOOTH + (-dy * 2.0) * (1 - VEL_SMOOTH);
+        ht_updateCamera();
+      }
+      ht_prevX = px;
+      ht_prevY = py;
+      ht_setLabel('ROTATE');
     }
 
     function ht_init() {
       const video = document.getElementById('ht-video');
+      const CAM_W = 320, CAM_H = 180;
+      const CROP_SZ = 256;
+
+      // ── Offscreen canvas for wrist crops ─────────────────────────────────
+      const cropCanvas = document.createElement('canvas');
+      cropCanvas.width = CROP_SZ; cropCanvas.height = CROP_SZ;
+      const cropCtx = cropCanvas.getContext('2d');
+
+      let smoothCrop = null;
+      const CROP_EMA = 0.5;
+
+      // ── MediaPipe Hands (receives crops or full frame) ────────────────────
       const mpHands = new Hands({
         locateFile: file =>
           `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`
@@ -3638,15 +5035,145 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         minDetectionConfidence: 0.7,
         minTrackingConfidence: 0.5
       });
-      mpHands.onResults(ht_onResults);
 
+      // Crop metadata for the current frame — used to remap landmarks
+      let activeCrops = null; // null = full-frame mode, array = crop regions
+
+      mpHands.onResults(results => {
+        // If we used crops, remap landmarks back to full-frame coordinates
+        if (activeCrops && results.multiHandLandmarks) {
+          results.multiHandLandmarks.forEach((lm, hi) => {
+            const crop = activeCrops[Math.min(hi, activeCrops.length - 1)];
+            lm.forEach(p => {
+              p.x = crop.x / CAM_W + p.x * (crop.w / CAM_W);
+              p.y = crop.y / CAM_H + p.y * (crop.h / CAM_H);
+            });
+          });
+        }
+        ht_onResults(results);
+      });
+
+      // ── MediaPipe Pose (coarse detector — lite model) ─────────────────────
+      const mpPose = new Pose({
+        locateFile: file =>
+          `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/${file}`
+      });
+      mpPose.setOptions({
+        modelComplexity: 0,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+      });
+
+      // Pose landmarks: 13=L elbow, 14=R elbow, 15=L wrist, 16=R wrist
+      function wristCrop(poseLm, elbowIdx, wristIdx) {
+        const elbow = poseLm[elbowIdx];
+        const wrist = poseLm[wristIdx];
+        const armLen = Math.hypot(
+          (wrist.x - elbow.x) * CAM_W,
+          (wrist.y - elbow.y) * CAM_H
+        );
+        const side = Math.max(64, armLen * 2.0);
+        const cx = wrist.x * CAM_W;
+        const cy = wrist.y * CAM_H;
+        // Clamp to frame bounds
+        const x = Math.max(0, Math.min(CAM_W - side, cx - side / 2));
+        const y = Math.max(0, Math.min(CAM_H - side, cy - side / 2));
+        return { x, y, w: side, h: side, visibility: wrist.visibility };
+      }
+
+      const WRIST_VIS_ENTER = 0.6;
+      const WRIST_VIS_EXIT  = 0.35;
+      let cropModeActive = false;
+
+      mpPose.onResults(async poseResults => {
+        const plm = poseResults.poseLandmarks;
+        // If Pose found wrists with decent visibility, crop and send to Hands
+        if (plm) {
+          const crops = [];
+          const lVis = plm[15].visibility;
+          const rVis = plm[16].visibility;
+
+          // Hysteresis: enter crop mode requires high vis, exit requires low vis
+          const anyAboveEnter = lVis > WRIST_VIS_ENTER || rVis > WRIST_VIS_ENTER;
+          const allBelowExit  = lVis < WRIST_VIS_EXIT  && rVis < WRIST_VIS_EXIT;
+
+          if (!cropModeActive && anyAboveEnter) {
+            cropModeActive = true;
+            ht_emaState.lm = null;
+            ob_emaState.lm = null;
+          }
+          if (cropModeActive && allBelowExit) {
+            cropModeActive = false;
+            smoothCrop = null;
+            ht_emaState.lm = null;
+            ob_emaState.lm = null;
+          }
+
+          if (cropModeActive) {
+            if (lVis > WRIST_VIS_EXIT) crops.push(wristCrop(plm, 13, 15));
+            if (rVis > WRIST_VIS_EXIT) crops.push(wristCrop(plm, 14, 16));
+          }
+
+          if (crops.length > 0) {
+            // Build a single crop canvas containing the largest wrist region
+            // For two hands we send a combined region that covers both wrists
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            crops.forEach(c => {
+              minX = Math.min(minX, c.x);
+              minY = Math.min(minY, c.y);
+              maxX = Math.max(maxX, c.x + c.w);
+              maxY = Math.max(maxY, c.y + c.h);
+            });
+            // Enforce square crop (Hands expects roughly square input)
+            let regionW = maxX - minX;
+            let regionH = maxY - minY;
+            const regionSide = Math.max(regionW, regionH);
+            // Re-center
+            const rcx = (minX + maxX) / 2;
+            const rcy = (minY + maxY) / 2;
+            minX = Math.max(0, rcx - regionSide / 2);
+            minY = Math.max(0, rcy - regionSide / 2);
+            const finalW = Math.min(regionSide, CAM_W - minX);
+            const finalH = Math.min(regionSide, CAM_H - minY);
+
+            const rawCrop = { x: minX, y: minY, w: finalW, h: finalH };
+            if (smoothCrop === null) {
+              smoothCrop = { ...rawCrop };
+            } else {
+              smoothCrop.x = CROP_EMA * rawCrop.x + (1 - CROP_EMA) * smoothCrop.x;
+              smoothCrop.y = CROP_EMA * rawCrop.y + (1 - CROP_EMA) * smoothCrop.y;
+              smoothCrop.w = CROP_EMA * rawCrop.w + (1 - CROP_EMA) * smoothCrop.w;
+              smoothCrop.h = CROP_EMA * rawCrop.h + (1 - CROP_EMA) * smoothCrop.h;
+            }
+            const cropRegion = {
+              x: Math.round(smoothCrop.x),
+              y: Math.round(smoothCrop.y),
+              w: Math.round(smoothCrop.w),
+              h: Math.round(smoothCrop.h)
+            };
+            cropCtx.clearRect(0, 0, CROP_SZ, CROP_SZ);
+            cropCtx.drawImage(video,
+              cropRegion.x, cropRegion.y, cropRegion.w, cropRegion.h,
+              0, 0, CROP_SZ, CROP_SZ
+            );
+            activeCrops = [cropRegion];
+            await mpHands.send({ image: cropCanvas });
+            return;
+          }
+        }
+        // Fallback: no wrists detected by Pose — send full frame to Hands
+        activeCrops = null;
+        await mpHands.send({ image: video });
+      });
+
+      // ── Camera loop — always sends to Pose first ─────────────────────────
       const cam = new Camera(video, {
-        onFrame: async () => { await mpHands.send({ image: video }); },
-        width: 320,
-        height: 180
+        onFrame: async () => { await mpPose.send({ image: video }); },
+        width: CAM_W,
+        height: CAM_H
       });
       cam.start();
-      ht_setLabel('LOADING MODEL...');
+      ht_setLabel('LOADING MODELS...');
     }
 
     // Start hand tracking when the setup screen is hidden (graph is ready)
@@ -3662,6 +5189,14 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
     });
     _htObserver.observe(document.getElementById('setup'),
       { attributes: true, attributeFilter: ['class'] });
+
+    // ═══════════════════════════════════════════════
+    // Renderer Badge (bottom-right debug indicator)
+    // ═══════════════════════════════════════════════
+    const rendererBadge = document.createElement('div');
+    rendererBadge.textContent = gpuAvailable ? 'WebGPU' : 'WebGL';
+    rendererBadge.style.cssText = 'position:fixed;bottom:8px;right:8px;font:11px var(--mono);color:var(--text-dim);opacity:0.5;z-index:99;pointer-events:none;';
+    document.body.appendChild(rendererBadge);
 
   </script>
 
