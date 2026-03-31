@@ -5490,12 +5490,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let ob_wasTwoHands = false;
 
     // Fix 5 — EMA smoothing of landmarks
-    const HT_EMA_ALPHA = 0.65;  // Increased from 0.45 for smoother hand tracking
+    const HT_EMA_ALPHA = 0.45;
     let ht_emaState = { lm: null };
     let ob_emaState = { lm: null };
-    let ht_noDetectFrames = 0;  // Count consecutive frames with no hands detected
-    const HT_PREDICT_FRAMES = 8;  // Max frames to predict hand position when lost
-    let ht_lastLm = null;  // Remember last detected landmarks for prediction
 
     function ht_updateCamera() {
       if (!Graph) return;
@@ -5640,56 +5637,39 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
       const hands = results.multiHandLandmarks || [];
 
-      // No hands detected, but use prediction for a few frames to avoid flicker
+      // No hands
       if (hands.length === 0) {
-        ht_noDetectFrames++;
-
-        // If we have a recent hand memory and haven't exceeded prediction frames,
-        // use the last detected hand to avoid flicker during brief occlusions
-        if (ht_lastLm && ht_noDetectFrames <= HT_PREDICT_FRAMES) {
-          // Use last known landmarks (already smoothed) instead of losing them
-          results.multiHandLandmarks = [ht_lastLm];
-          results.multiHandedness = [{ index: 0, label: 'Right', score: 0.5 }];
-          // Continue processing with predicted hand
-        } else {
-          // Beyond prediction window, reset everything
-          ht_noDetectFrames = 0;
-          ht_lastLm = null;
-
-          // Start inertia if there was rotation velocity
-          if (ht_prevX !== null && (Math.abs(ht_velPhi) > HT_INERTIA_MIN || Math.abs(ht_velTheta) > HT_INERTIA_MIN)) {
-            if (!ht_inertiaRAF) ht_inertiaRAF = requestAnimationFrame(ht_inertiaLoop);
-          }
-          ht_prevX = null; ht_prevY = null;
-          ht_twoHandPrevDist = null;
-          ht_pointFrames     = 0;
-          ht_fistFrames      = 0;
-          ht_fistStillFrames = 0;
-          ht_fistPrevX       = null;
-          ht_fistPrevY       = null;
-          ht_candidateNode   = null;
-          ht_candidateFrames = 0;
-          ob_fistFrames      = 0;
-          ob_prevX           = null; ob_prevY = null;
-          ob_twoHandPrevDist = null;
-          ht_zoomCooldown    = 0;
-          ob_zoomCooldown    = 0;
-          // Fix 2 reset
-          ht_extendedState.fill(false);
-          // Fix 3 reset
-          ht_lastGesture = 'other'; ht_pendGesture = 'other'; ht_pendFrames = 0; ht_lockFrames = 0;
-          ob_lastGesture = 'other'; ob_pendGesture = 'other'; ob_pendFrames = 0; ob_lockFrames = 0;
-          // Fix 5 reset
-          ht_emaState.lm = null; ob_emaState.lm = null;
-          ht_noHandFrames++;
-          if (ht_noHandFrames > HT_RELEASE_FRAMES && Graph) {
-            Graph.controls().enabled = true;
-          }
-          ht_setLabel('NO HAND');
-          return;
+        // Start inertia if there was rotation velocity
+        if (ht_prevX !== null && (Math.abs(ht_velPhi) > HT_INERTIA_MIN || Math.abs(ht_velTheta) > HT_INERTIA_MIN)) {
+          if (!ht_inertiaRAF) ht_inertiaRAF = requestAnimationFrame(ht_inertiaLoop);
         }
-      } else {
-        ht_noDetectFrames = 0;
+        ht_prevX = null; ht_prevY = null;
+        ht_twoHandPrevDist = null;
+        ht_pointFrames     = 0;
+        ht_fistFrames      = 0;
+        ht_fistStillFrames = 0;
+        ht_fistPrevX       = null;
+        ht_fistPrevY       = null;
+        ht_candidateNode   = null;
+        ht_candidateFrames = 0;
+        ob_fistFrames      = 0;
+        ob_prevX           = null; ob_prevY = null;
+        ob_twoHandPrevDist = null;
+        ht_zoomCooldown    = 0;
+        ob_zoomCooldown    = 0;
+        // Fix 2 reset
+        ht_extendedState.fill(false);
+        // Fix 3 reset
+        ht_lastGesture = 'other'; ht_pendGesture = 'other'; ht_pendFrames = 0; ht_lockFrames = 0;
+        ob_lastGesture = 'other'; ob_pendGesture = 'other'; ob_pendFrames = 0; ob_lockFrames = 0;
+        // Fix 5 reset
+        ht_emaState.lm = null; ob_emaState.lm = null;
+        ht_noHandFrames++;
+        if (ht_noHandFrames > HT_RELEASE_FRAMES && Graph) {
+          Graph.controls().enabled = true;
+        }
+        ht_setLabel('NO HAND');
+        return;
       }
 
       ht_noHandFrames = 0;
@@ -5949,11 +5929,6 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       ht_prevX = px;
       ht_prevY = py;
       ht_setLabel('ROTATE');
-
-      // Save the last detected landmarks for prediction if tracking is briefly lost
-      if (hands.length > 0) {
-        ht_lastLm = ht_emaState.lm;
-      }
     }
 
     function ht_init() {
@@ -5977,8 +5952,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       mpHands.setOptions({
         maxNumHands: 2,
         modelComplexity: 1,
-        minDetectionConfidence: 0.5,  // Reduced from 0.8 for better continuity
-        minTrackingConfidence: 0.5    // Improved tracking stability
+        minDetectionConfidence: 0.8,
+        minTrackingConfidence: 0.6
       });
 
       // Crop metadata for the current frame — used to remap landmarks
