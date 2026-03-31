@@ -1439,7 +1439,12 @@
       }
       if (!dataScript) throw new Error('No graph data found in file');
 
-      if (format === 'matria') return parseMatriaFormat(dataScript);
+      console.log('[parseExternalGraph] Detected format:', format);
+      if (format === 'matria') {
+        const result = parseMatriaFormat(dataScript);
+        console.log('[parseExternalGraph] Matria result:', result.nodesArr?.length, 'nodes');
+        return result;
+      }
       if (format === 'kg') return parseKnowledgeGraphFormat(dataScript);
       if (format === 'visjs') return parseVisJsFormat(dataScript);
       throw new Error('Unrecognized graph format');
@@ -1450,7 +1455,11 @@
       const extractVar = (varName) => {
         const re = new RegExp('var\\s+' + varName + '\\s*=\\s*');
         const match = re.exec(script);
-        if (!match) return varName === 'nodesArr' ? [] : (varName.endsWith('Arr') ? [] : {});
+        if (!match) {
+          console.warn('[parseMatriaFormat] Variable not found:', varName);
+          return varName === 'nodesArr' ? [] : (varName.endsWith('Arr') ? [] : {});
+        }
+        console.log('[parseMatriaFormat] Found', varName, 'at position', match.index);
 
         let start = match.index + match[0].length;
         while (start < script.length && /\s/.test(script[start])) start++;
