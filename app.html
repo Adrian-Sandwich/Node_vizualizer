@@ -1421,25 +1421,52 @@
       // Extract the JSON arrays from: nodes = new vis.DataSet([...])
       // and: edges = new vis.DataSet([...])
       const extractArray = (varName) => {
-        const re = new RegExp(varName + '\\s*=\\s*new\\s+vis\\.DataSet\\(');
+        const re = new RegExp(varName + '\\s*=\\s*new\\s+vis\\.DataSet\\s*\\(');
         const match = re.exec(script);
         if (!match) return [];
         let start = match.index + match[0].length;
-        // Find the matching closing paren by bracket counting
-        let depth = 1; let i = start;
+
+        // Skip whitespace to find the opening bracket/brace
+        while (start < script.length && /\s/.test(script[start])) start++;
+        if (start >= script.length) return [];
+
+        const opener = script[start];
+        const closer = opener === '[' ? ']' : '}';
+
+        // Extract balanced JSON using proper bracket counting with string awareness
+        let depth = 1;
+        let inStr = false;
+        let escape = false;
+        let i = start + 1;
+
         while (i < script.length && depth > 0) {
-          if (script[i] === '(' || script[i] === '[') depth++;
-          else if (script[i] === ')' || script[i] === ']') depth--;
+          const c = script[i];
+          if (escape) {
+            escape = false;
+          } else if (c === '\\' && inStr) {
+            escape = true;
+          } else if (c === '"') {
+            inStr = !inStr;
+          } else if (!inStr) {
+            if (c === opener || c === '[' || c === '{') depth++;
+            else if (c === closer || c === ']' || c === '}') depth--;
+          }
           i++;
         }
-        // i now points after the closing ), the array is between start and i-1
-        const jsonStr = script.substring(start, i - 1);
-        return JSON.parse(jsonStr);
+
+        // Extract and parse the JSON
+        const jsonStr = script.substring(start, i);
+        try {
+          return JSON.parse(jsonStr);
+        } catch (e) {
+          console.error('Failed to parse vis.DataSet array:', e);
+          return [];
+        }
       };
 
       const rawNodes = extractArray('nodes');
       const rawEdges = extractArray('edges');
-      if (!rawNodes.length) throw new Error('No nodes found in vis.js DataSet');
+      if (!rawNodes || !rawNodes.length) throw new Error('No nodes found in vis.js DataSet. If this is a matria HTML, try refreshing the page. Otherwise, use a .kgraph.json file instead (faster and more reliable).');
 
       // Build domain colors from unique groups, preferring node's own color
       const groupSet = new Set(rawNodes.map(n => n.group || 'Unknown'));
