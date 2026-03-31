@@ -1763,85 +1763,94 @@
     }
 
     async function loadExternalGraph(file) {
-      setupStatus.textContent = 'READING GRAPH FILE...';
-      const text = await file.text();
+      try {
+        setupStatus.textContent = 'READING GRAPH FILE...';
+        const text = await file.text();
+        console.log('[loadExternalGraph] File read, size:', text.length);
 
-      setupStatus.textContent = 'PARSING GRAPH DATA...';
-      let parsed;
-      // Detect JSON vs HTML format
-      if (text.trimStart().startsWith('{')) {
-        try {
-          const obj = JSON.parse(text);
-          if (obj.format !== 'kgraph') {
-            throw new Error('JSON file must have format="kgraph"');
+        setupStatus.textContent = 'PARSING GRAPH DATA...';
+        let parsed;
+        // Detect JSON vs HTML format
+        if (text.trimStart().startsWith('{')) {
+          try {
+            const obj = JSON.parse(text);
+            if (obj.format !== 'kgraph') {
+              throw new Error('JSON file must have format="kgraph"');
+            }
+            parsed = parseKGraphFormat(obj);
+            console.log('[loadExternalGraph] Parsed .kgraph.json:', parsed.nodesArr.length, 'nodes');
+          } catch (err) {
+            throw new Error('Invalid .kgraph.json file: ' + err.message);
           }
-          parsed = parseKGraphFormat(obj);
-        } catch (err) {
-          throw new Error('Invalid .kgraph.json file: ' + err.message);
+        } else {
+          // HTML format (matria or visjs)
+          parsed = parseExternalGraph(text);
+          console.log('[loadExternalGraph] Parsed HTML graph:', parsed.nodesArr.length, 'nodes');
         }
-      } else {
-        // HTML format (matria or visjs)
-        parsed = parseExternalGraph(text);
+
+        const mapped = mapExternalToInternal(parsed);
+        console.log('[loadExternalGraph] Mapped to internal:', mapped.nodes.length, 'nodes,', mapped.edges.length, 'edges');
+        setupStatus.textContent = `FOUND ${mapped.nodes.length} NODES, ${mapped.edges.length} EDGES`;
+
+        isExternalGraph = true;
+        externalGraphMeta = mapped.meta;
+        CLUSTER_COLORS = mapped.clusterColors;
+        allNodes = mapped.nodes;
+        edgeSets = { graph: mapped.edges };
+        currentLayout = 'graph';
+
+        // Save parsed data for export
+        lastLoadedGraphData = {
+          nodes: parsed.nodesArr.map(n => ({
+            id: n.id,
+            label: n.label || n.id,
+            tag: n._tag,
+            domain: n._domain,
+            vid: n._vid,
+            size: n.size || 10,
+            tooltip: n._tooltip || '',
+            props: Object.fromEntries(Object.entries(n).filter(([k]) =>
+              !['id','label','_tag','_domain','_vid','_tooltip','size'].includes(k)))
+          })),
+          edges: parsed.edgesArr.map(e => ({
+            from: e.from,
+            to: e.to,
+            type: e._edgeType || '',
+            label_forward: e._edgeType || '',
+            label_backward: '',
+            weight: 1.0
+          })),
+          meta: {
+            created_at: new Date().toISOString(),
+            node_count: parsed.nodesArr.length,
+            edge_count: parsed.edgesArr.length,
+            domain_colors: parsed.DOMAIN_COLORS || {},
+            domain_labels: parsed.DOMAIN_LABELS || {},
+            tag_counts: parsed.TAG_COUNTS || {},
+            edge_type_counts: parsed.EDGE_TYPE_COUNTS || {}
+          }
+        };
+
+        document.getElementById('setup').classList.add('hidden');
+        document.getElementById('main').classList.remove('hidden');
+        document.getElementById('reanalyze-btn').classList.add('hidden');
+        document.getElementById('export-kgraph-btn').classList.remove('hidden');
+        document.getElementById('controls').style.display = 'none';
+        // K-NN row not shown in external graph mode (no longer a visible row)
+
+        setBootStage('LOADING GRAPH...', `${mapped.nodes.length} NODES`);
+
+        await initGraph(mapped.nodes, mapped.edges);
+        buildLegend(mapped.clusterNames);
+        buildClusterLabels(mapped.clusterNames);
+        buildReadouts(mapped.nodes.length, mapped.edges.length);
+
+        setBootStage(`GRAPH ONLINE // ${mapped.nodes.length} NODES // ${mapped.edges.length} EDGES`, '');
+        setTimeout(hideBootStatus, 2000);
+      } catch (err) {
+        console.error('[loadExternalGraph] Error:', err);
+        setupStatus.textContent = 'ERROR: ' + err.message.toUpperCase();
       }
-
-      const mapped = mapExternalToInternal(parsed);
-      setupStatus.textContent = `FOUND ${mapped.nodes.length} NODES, ${mapped.edges.length} EDGES`;
-
-      isExternalGraph = true;
-      externalGraphMeta = mapped.meta;
-      CLUSTER_COLORS = mapped.clusterColors;
-      allNodes = mapped.nodes;
-      edgeSets = { graph: mapped.edges };
-      currentLayout = 'graph';
-
-      // Save parsed data for export
-      lastLoadedGraphData = {
-        nodes: parsed.nodesArr.map(n => ({
-          id: n.id,
-          label: n.label || n.id,
-          tag: n._tag,
-          domain: n._domain,
-          vid: n._vid,
-          size: n.size || 10,
-          tooltip: n._tooltip || '',
-          props: Object.fromEntries(Object.entries(n).filter(([k]) =>
-            !['id','label','_tag','_domain','_vid','_tooltip','size'].includes(k)))
-        })),
-        edges: parsed.edgesArr.map(e => ({
-          from: e.from,
-          to: e.to,
-          type: e._edgeType || '',
-          label_forward: e._edgeType || '',
-          label_backward: '',
-          weight: 1.0
-        })),
-        meta: {
-          created_at: new Date().toISOString(),
-          node_count: parsed.nodesArr.length,
-          edge_count: parsed.edgesArr.length,
-          domain_colors: parsed.DOMAIN_COLORS || {},
-          domain_labels: parsed.DOMAIN_LABELS || {},
-          tag_counts: parsed.TAG_COUNTS || {},
-          edge_type_counts: parsed.EDGE_TYPE_COUNTS || {}
-        }
-      };
-
-      document.getElementById('setup').classList.add('hidden');
-      document.getElementById('main').classList.remove('hidden');
-      document.getElementById('reanalyze-btn').classList.add('hidden');
-      document.getElementById('export-kgraph-btn').classList.remove('hidden');
-      document.getElementById('controls').style.display = 'none';
-      // K-NN row not shown in external graph mode (no longer a visible row)
-
-      setBootStage('LOADING GRAPH...', `${mapped.nodes.length} NODES`);
-
-      await initGraph(mapped.nodes, mapped.edges);
-      buildLegend(mapped.clusterNames);
-      buildClusterLabels(mapped.clusterNames);
-      buildReadouts(mapped.nodes.length, mapped.edges.length);
-
-      setBootStage(`GRAPH ONLINE // ${mapped.nodes.length} NODES // ${mapped.edges.length} EDGES`, '');
-      setTimeout(hideBootStatus, 2000);
     }
 
     document.getElementById('load-graph-btn').addEventListener('click', () => {
