@@ -9,7 +9,20 @@ A standard `.kgraph.json` format for storing knowledge graphs independently of H
 
 ## Quick Start
 
-### Convert HTML to .kgraph.json
+### Option 1: Load a Pre-Converted Graph (Easiest) ⚡
+
+1. Open `app.html` in a browser
+2. Click "LOAD EXTERNAL GRAPH"
+3. Select a `.kgraph.json` file from the `graphs/` folder
+4. The graph loads immediately with all metadata intact
+
+**Available graphs in `graphs/` folder:**
+- `grafo_muestra_1k.kgraph.json` — 471 nodes, 1,099 edges
+- `kg_nebula_bfs_3500_20260113_022814.kgraph.json` — 2,792 nodes, 4,414 edges
+- `jerarquia_interactiva.kgraph.json` — 326 nodes, 358 edges
+- `knowledge_graph.kgraph.json` — 831 nodes, 1,175 edges
+
+### Option 2: Convert Your Own HTML Graph
 
 ```bash
 python3 graph_converter.py input_file.html
@@ -17,12 +30,7 @@ python3 graph_converter.py input_file.html --pretty    # pretty-print JSON
 python3 graph_converter.py input_file.html --force-format kg  # override detection
 ```
 
-### Load in app.html
-
-1. Open `app.html` in a browser
-2. Click "LOAD EXTERNAL GRAPH"
-3. Select a `.kgraph.json` file
-4. The graph loads immediately with all metadata intact
+Then load the resulting `.kgraph.json` in app.html via "LOAD EXTERNAL GRAPH".
 
 ## Format Specification
 
