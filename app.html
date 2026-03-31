@@ -1402,6 +1402,27 @@
 
     // ── External graph import ───────────────────────────────────────────
 
+    function removeJSONComments(jsonStr) {
+      // Remove single-line comments (// ...) that may appear in JSON
+      // while preserving comments inside strings
+      return jsonStr
+        .split('\n')
+        .map(line => {
+          let inStr = false;
+          let escape = false;
+          for (let j = 0; j < line.length - 1; j++) {
+            if (escape) { escape = false; continue; }
+            if (line[j] === '\\' && inStr) { escape = true; continue; }
+            if (line[j] === '"') { inStr = !inStr; continue; }
+            if (!inStr && line[j] === '/' && line[j+1] === '/') {
+              return line.substring(0, j).trim();
+            }
+          }
+          return line;
+        })
+        .join('\n');
+    }
+
     function parseExternalGraph(htmlText) {
       const parser = new DOMParser();
       const doc = parser.parseFromString(htmlText, 'text/html');
@@ -1478,7 +1499,9 @@
           i++;
         }
 
-        const jsonStr = script.substring(start, i);
+        let jsonStr = script.substring(start, i);
+        jsonStr = removeJSONComments(jsonStr);
+
         try {
           return JSON.parse(jsonStr);
         } catch (e) {
@@ -1578,7 +1601,9 @@
         }
 
         // Extract and parse the JSON
-        const jsonStr = script.substring(start, i);
+        let jsonStr = script.substring(start, i);
+        jsonStr = removeJSONComments(jsonStr);
+
         try {
           return JSON.parse(jsonStr);
         } catch (e) {
