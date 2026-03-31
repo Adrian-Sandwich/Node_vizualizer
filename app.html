@@ -1410,11 +1410,11 @@
         .map(line => {
           let inStr = false;
           let escape = false;
-          for (let j = 0; j < line.length - 1; j++) {
+          for (let j = 0; j < line.length; j++) {
             if (escape) { escape = false; continue; }
             if (line[j] === '\\' && inStr) { escape = true; continue; }
             if (line[j] === '"') { inStr = !inStr; continue; }
-            if (!inStr && line[j] === '/' && line[j+1] === '/') {
+            if (!inStr && j < line.length - 1 && line[j] === '/' && line[j+1] === '/') {
               return line.substring(0, j).trim();
             }
           }
