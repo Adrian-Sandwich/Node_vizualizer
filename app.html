@@ -1428,14 +1428,23 @@
       const doc = parser.parseFromString(htmlText, 'text/html');
       const scripts = doc.querySelectorAll('script');
 
-      // Detect format: "var nodesArr" (matria) vs "new vis.DataSet" (nebula/vis.js) vs "rawVertices" (knowledge_graph)
+      // Detect format with more specificity
       let dataScript = null;
       let format = null;
       for (const s of scripts) {
         const txt = s.textContent;
-        if (txt.includes('var nodesArr')) { dataScript = txt; format = 'matria'; break; }
-        if (txt.includes('rawVertices') || txt.includes('rawEdges')) { dataScript = txt; format = 'kg'; break; }
-        if (txt.includes('new vis.DataSet(')) { dataScript = txt; format = 'visjs'; break; }
+        // Check for matria format first (most specific: var nodesArr = [...])
+        if (/var\s+nodesArr\s*=/.test(txt) && /var\s+edgesArr\s*=/.test(txt)) {
+          dataScript = txt; format = 'matria'; break;
+        }
+        // Check for knowledge_graph format (rawVertices/rawEdges)
+        if (/var\s+rawVertices\s*=/.test(txt) || /var\s+rawEdges\s*=/.test(txt)) {
+          dataScript = txt; format = 'kg'; break;
+        }
+        // Check for vis.js format (new vis.DataSet)
+        if (/nodes\s*=\s*new\s+vis\.DataSet/.test(txt)) {
+          dataScript = txt; format = 'visjs'; break;
+        }
       }
       if (!dataScript) throw new Error('No graph data found in file');
 
