@@ -4687,31 +4687,44 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         .graphData({ nodes, links })
         .backgroundColor(`rgba(${hexToRgb(VFX.bgColor.val)},${VFX.bgAlpha.val})`)
         .showNavInfo(false)
-        .warmupTicks(isExternalGraph ? 200 : 60)
-        .cooldownTicks(isExternalGraph ? 400 : Infinity)
+        .warmupTicks(isExternalGraph ? 80 : 40)
+        .cooldownTicks(isExternalGraph ? 200 : Infinity)
         .nodeThreeObject(node => createNodeObject(node))
         .nodeThreeObjectExtend(false)
         .nodeLabel(node => buildNodeTooltip(node))
         .linkColor(link => getLinkColor(link))
         .linkWidth(isExternalGraph ? 0.3 : (link => getLinkWidth(link)))
         .linkOpacity(1.0)
-        .linkHoverPrecision(VFX.linkHoverPrec.val)
+        .linkHoverPrecision(isExternalGraph ? 1 : VFX.linkHoverPrec.val)
         .linkLabel(link => buildLinkTooltip(link))
         .linkDirectionalParticles(isExternalGraph ? 0 : VFX.particleCount.val)
         .linkDirectionalParticleWidth(VFX.particleWidth.val)
         .linkDirectionalParticleSpeed(VFX.particleSpeed.val)
         .linkDirectionalParticleColor(() => `rgba(${hexToRgb(VFX.particleColor.val)},${VFX.particleAlpha.val})`)
         .linkCurvature(isExternalGraph ? 0 : VFX.linkCurvatureVal.val)
-        .linkVisibility(link => link.topology === currentLayout)
+        .linkVisibility(link => {
+          if (link.topology !== currentLayout) return false;
+          // Cull edges for very large graphs (>2000 nodes): only show if within ~300 units
+          if (nodes.length > 2000) {
+            const src = link.source, tgt = link.target;
+            if (!src || !tgt) return true;
+            const dx = (src.x || 0) - (tgt.x || 0);
+            const dy = (src.y || 0) - (tgt.y || 0);
+            const dz = (src.z || 0) - (tgt.z || 0);
+            const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+            return dist < 300; // Hide distant edges
+          }
+          return true;
+        })
         .onNodeClick(handleNodeClick)
         .onNodeHover(handleNodeHover)
         .onBackgroundClick(handleBackgroundClick);
 
-      // Force configuration
+      // Force configuration (optimized for performance with large graphs)
       if (isExternalGraph) {
-        // Keep default center force (already set by ForceGraph3D)
-        Graph.d3Force('charge').strength(-8);
-        Graph.d3Force('link').distance(60).strength(0.02);
+        // Reduced forces for faster stabilization on large graphs
+        Graph.d3Force('charge').strength(-5); // reduced from -8
+        Graph.d3Force('link').distance(50).strength(0.01); // reduced from 60, 0.02
       } else {
         Graph
           .d3Force('position', createPositionForce(0.18))
