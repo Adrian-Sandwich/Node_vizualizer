@@ -1446,21 +1446,53 @@
     }
 
     function parseMatriaFormat(script) {
-      const varNames = [
-        'nodesArr', 'edgesArr', 'DOMAIN_COLORS', 'DOMAIN_LABELS',
-        'DOMAIN_MAP', 'TAG_SCHEMA', 'TAG_COUNTS', 'EDGE_TYPE_COUNTS'
-      ];
-      const lines = [];
-      for (const line of script.split('\n')) {
-        const trimmed = line.trim();
-        if (varNames.some(v => trimmed.startsWith('var ' + v + ' =') || trimmed.startsWith('var ' + v + '='))) {
-          lines.push(trimmed);
+      // Use bracket-balanced extraction instead of new Function() for robustness with large arrays
+      const extractVar = (varName) => {
+        const re = new RegExp('var\\s+' + varName + '\\s*=\\s*');
+        const match = re.exec(script);
+        if (!match) return varName === 'nodesArr' ? [] : (varName.endsWith('Arr') ? [] : {});
+
+        let start = match.index + match[0].length;
+        while (start < script.length && /\s/.test(script[start])) start++;
+        if (start >= script.length) return varName === 'nodesArr' ? [] : (varName.endsWith('Arr') ? [] : {});
+
+        const opener = script[start];
+        const closer = opener === '[' ? ']' : '}';
+
+        let depth = 1, inStr = false, escape = false;
+        let i = start + 1;
+        while (i < script.length && depth > 0) {
+          const c = script[i];
+          if (escape) escape = false;
+          else if (c === '\\' && inStr) escape = true;
+          else if (c === '"') inStr = !inStr;
+          else if (!inStr) {
+            if (c === opener || c === '[' || c === '{') depth++;
+            else if (c === closer || c === ']' || c === '}') depth--;
+          }
+          i++;
         }
-      }
-      if (lines.length < 2) throw new Error('Could not extract graph variables');
-      const code = lines.join('\n')
-        + '\nreturn {' + varNames.join(',') + '};';
-      return new Function(code)();
+
+        let jsonStr = script.substring(start, i);
+        jsonStr = removeJSONComments(jsonStr);
+        try {
+          return JSON.parse(jsonStr);
+        } catch (e) {
+          console.warn('[parseMatriaFormat] Failed to parse ' + varName, e);
+          return varName === 'nodesArr' ? [] : (varName.endsWith('Arr') ? [] : {});
+        }
+      };
+
+      return {
+        nodesArr: extractVar('nodesArr'),
+        edgesArr: extractVar('edgesArr'),
+        DOMAIN_COLORS: extractVar('DOMAIN_COLORS'),
+        DOMAIN_LABELS: extractVar('DOMAIN_LABELS'),
+        DOMAIN_MAP: extractVar('DOMAIN_MAP'),
+        TAG_SCHEMA: extractVar('TAG_SCHEMA'),
+        TAG_COUNTS: extractVar('TAG_COUNTS'),
+        EDGE_TYPE_COUNTS: extractVar('EDGE_TYPE_COUNTS')
+      };
     }
 
     function parseKnowledgeGraphFormat(script) {
