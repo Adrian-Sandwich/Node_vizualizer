@@ -1407,17 +1407,19 @@
       const doc = parser.parseFromString(htmlText, 'text/html');
       const scripts = doc.querySelectorAll('script');
 
-      // Detect format: "var nodesArr" (matria) vs "new vis.DataSet" (nebula/vis.js)
+      // Detect format: "var nodesArr" (matria) vs "new vis.DataSet" (nebula/vis.js) vs "rawVertices" (knowledge_graph)
       let dataScript = null;
       let format = null;
       for (const s of scripts) {
         const txt = s.textContent;
         if (txt.includes('var nodesArr')) { dataScript = txt; format = 'matria'; break; }
+        if (txt.includes('rawVertices') || txt.includes('rawEdges')) { dataScript = txt; format = 'kg'; break; }
         if (txt.includes('new vis.DataSet(')) { dataScript = txt; format = 'visjs'; break; }
       }
       if (!dataScript) throw new Error('No graph data found in file');
 
       if (format === 'matria') return parseMatriaFormat(dataScript);
+      if (format === 'kg') return parseKnowledgeGraphFormat(dataScript);
       if (format === 'visjs') return parseVisJsFormat(dataScript);
       throw new Error('Unrecognized graph format');
     }
@@ -1438,6 +1440,104 @@
       const code = lines.join('\n')
         + '\nreturn {' + varNames.join(',') + '};';
       return new Function(code)();
+    }
+
+    function parseKnowledgeGraphFormat(script) {
+      // Extract rawVertices and rawEdges arrays (supports var, const, let declarations)
+      const extractArray = (varName) => {
+        const re = new RegExp('(var|const|let)?\\s*' + varName + '\\s*=\\s*');
+        const match = re.exec(script);
+        if (!match) return [];
+        let start = match.index + match[0].length;
+
+        // Skip whitespace
+        while (start < script.length && /\s/.test(script[start])) start++;
+        if (start >= script.length) return [];
+
+        const opener = script[start];
+        const closer = opener === '[' ? ']' : '}';
+
+        // Extract balanced JSON
+        let depth = 1;
+        let inStr = false;
+        let escape = false;
+        let i = start + 1;
+
+        while (i < script.length && depth > 0) {
+          const c = script[i];
+          if (escape) {
+            escape = false;
+          } else if (c === '\\' && inStr) {
+            escape = true;
+          } else if (c === '"') {
+            inStr = !inStr;
+          } else if (!inStr) {
+            if (c === opener || c === '[' || c === '{') depth++;
+            else if (c === closer || c === ']' || c === '}') depth--;
+          }
+          i++;
+        }
+
+        const jsonStr = script.substring(start, i);
+        try {
+          return JSON.parse(jsonStr);
+        } catch (e) {
+          return [];
+        }
+      };
+
+      const rawVertices = extractArray('rawVertices') || [];
+      const rawEdges = extractArray('rawEdges') || [];
+
+      // Build domain colors from unique tags
+      const DOMAIN_COLORS = {};
+      const DOMAIN_LABELS = {};
+      const TAG_COUNTS = {};
+      const palette = [
+        '#42A5F5','#66BB6A','#FFA726','#EF5350','#AB47BC',
+        '#26C6DA','#9CCC65','#78909C','#EC407A','#8D6E63'
+      ];
+      let ci = 0;
+
+      rawVertices.forEach(v => {
+        const tag = v.tag || 'Unknown';
+        TAG_COUNTS[tag] = (TAG_COUNTS[tag] || 0) + 1;
+        if (!DOMAIN_COLORS[tag]) {
+          DOMAIN_COLORS[tag] = palette[ci % palette.length];
+          DOMAIN_LABELS[tag] = tag;
+          ci++;
+        }
+      });
+
+      // Convert to matria format
+      const nodesArr = rawVertices.map(v => ({
+        id: v.vid,
+        label: (v.props && v.props.name) || v.vid,
+        _tag: v.tag || 'Unknown',
+        _domain: v.tag || 'Unknown',
+        _vid: v.vid,
+        _tooltip: '',
+        size: 10,
+        // Spread props
+        ...(v.props || {})
+      }));
+
+      const EDGE_TYPE_COUNTS = {};
+      const edgesArr = (rawEdges || []).map(e => {
+        const etype = e.type || 'UNKNOWN';
+        EDGE_TYPE_COUNTS[etype] = (EDGE_TYPE_COUNTS[etype] || 0) + 1;
+        return {
+          from: e.src,
+          to: e.dst,
+          _edgeType: etype
+        };
+      });
+
+      return {
+        nodesArr, edgesArr, DOMAIN_COLORS, DOMAIN_LABELS,
+        TAG_COUNTS, EDGE_TYPE_COUNTS,
+        TAG_SCHEMA: null, DOMAIN_MAP: null
+      };
     }
 
     function parseVisJsFormat(script) {
