@@ -1002,7 +1002,7 @@
     <button id="pick-folder-btn">SELECT NOTES FOLDER</button>
     <div id="setup-divider">OR</div>
     <button id="load-graph-btn">LOAD EXTERNAL GRAPH</button>
-    <input type="file" id="graph-file-input" accept=".html" style="display:none">
+    <input type="file" id="graph-file-input" accept=".html,.json" style="display:none">
     <button id="load-cache-btn" class="hidden">RESUME PREVIOUS SESSION</button>
     <div id="setup-status"></div>
   </div>
@@ -1512,6 +1512,37 @@
       };
     }
 
+    function parseKGraphFormat(obj) {
+      // Normalize .kgraph.json format to the intermediate shape expected by mapExternalToInternal
+      const nodesArr = (obj.nodes || []).map(n => ({
+        id:        n.id,
+        label:     n.label || n.id,
+        _tag:      n.tag     || 'Unknown',
+        _domain:   n.domain  || 'default',
+        _vid:      n.vid     || n.id,
+        _tooltip:  n.tooltip || '',
+        size:      n.size    || 10,
+        ...n.props,
+      }));
+
+      const edgesArr = (obj.edges || []).map(e => ({
+        from:      e.from,
+        to:        e.to,
+        _edgeType: e.type || e.label_forward || '',
+      }));
+
+      const m = obj.meta || {};
+      return {
+        nodesArr, edgesArr,
+        DOMAIN_COLORS:    m.domain_colors    || {},
+        DOMAIN_LABELS:    m.domain_labels    || {},
+        DOMAIN_MAP:       m.domain_map       || null,
+        TAG_SCHEMA:       m.tag_schema       || null,
+        TAG_COUNTS:       m.tag_counts       || null,
+        EDGE_TYPE_COUNTS: m.edge_type_counts || null,
+      };
+    }
+
     function mapExternalToInternal(parsed) {
       const { nodesArr, edgesArr, DOMAIN_COLORS, DOMAIN_LABELS, DOMAIN_MAP,
               TAG_SCHEMA, TAG_COUNTS, EDGE_TYPE_COUNTS } = parsed;
@@ -1561,7 +1592,22 @@
       const text = await file.text();
 
       setupStatus.textContent = 'PARSING GRAPH DATA...';
-      const parsed = parseExternalGraph(text);
+      let parsed;
+      // Detect JSON vs HTML format
+      if (text.trimStart().startsWith('{')) {
+        try {
+          const obj = JSON.parse(text);
+          if (obj.format !== 'kgraph') {
+            throw new Error('JSON file must have format="kgraph"');
+          }
+          parsed = parseKGraphFormat(obj);
+        } catch (err) {
+          throw new Error('Invalid .kgraph.json file: ' + err.message);
+        }
+      } else {
+        // HTML format (matria or visjs)
+        parsed = parseExternalGraph(text);
+      }
 
       const mapped = mapExternalToInternal(parsed);
       setupStatus.textContent = `FOUND ${mapped.nodes.length} NODES, ${mapped.edges.length} EDGES`;
