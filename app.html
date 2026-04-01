@@ -5532,7 +5532,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // Fist-pause system
     let htPaused            = false;  // hand tracking paused?
     let htPauseFistFrames   = 0;      // frames fist held for pause toggle
-    const HT_PAUSE_FRAMES  = 30;     // ~1 second at 30fps to toggle pause
+    const HT_PAUSE_FRAMES  = 15;     // ~500ms at 30fps to toggle pause (faster response)
     const HT_ZOOM_COOLDOWN  = 10;   // ~330ms grace period after zoom
 
     // Fist-still detection for reset
@@ -5804,6 +5804,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
       // ── Two hands → zoom ───────────────────────────────────────────────────
       if (hands.length >= 2) {
+        // Block zoom when paused — draw skeletons but prevent camera movement
+        if (htPaused) {
+          ht_drawSkeleton(hands[0]);
+          ht_drawSkeleton(hands[1]);
+          ht_setLabel('PAUSED');
+          return;
+        }
         const a = hands[0][9], b = hands[1][9];
         const dist = Math.hypot(b.x - a.x, b.y - a.y);
         if (ht_twoHandPrevDist !== null) {
