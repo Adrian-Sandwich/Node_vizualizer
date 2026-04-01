@@ -4869,6 +4869,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
       // Set initial camera to the "H" recenter position (zoom out more for large graphs)
       Graph.cameraPosition({ x: 0, y: 0, z: SCALE * 4 }, { x: 0, y: 0, z: 0 });
+
+      // Pre-calculate optimal hand-tracking zoom based on graph size
+      if (!ht_initialZoomCalculated && appState !== 'onboarding') {
+        setTimeout(() => {
+          ht_camR = calculateOptimalZoom();
+          ht_initialZoomCalculated = true;
+        }, 100);
+      }
     }
 
     // ── updateGraphData ──
@@ -5364,7 +5372,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         if (ObGraph) { if (ObGraph._destructor) ObGraph._destructor(); ObGraph = null; }
         // Reveal the real graph now that onboarding is done
         document.getElementById('graph').style.visibility = 'visible';
-        ht_camR = SCALE * 2.5; ht_camPhi = 0; ht_camTheta = Math.PI / 2;
+        ht_camPhi = 0; ht_camTheta = Math.PI / 2;
         ht_updateCamera();
         appState = 'ready';
       }, 800);
@@ -5504,6 +5512,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let ht_camPhi   = 0;
     let ht_camTheta = Math.PI / 2;
     let ht_camR     = SCALE * 2.5;
+    let ht_initialZoomCalculated = false; // track if we've computed optimal zoom
     let ht_prevX    = null;
     let ht_prevY    = null;
     let ht_twoHandPrevDist = null;
@@ -5565,6 +5574,34 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     const HT_EMA_ALPHA = 0.45;
     let ht_emaState = { lm: null };
     let ob_emaState = { lm: null };
+
+    // Calculate optimal camera distance based on graph bounding box
+    function calculateOptimalZoom() {
+      if (!Graph) return SCALE * 4;
+      const nodes = Graph.graphData().nodes;
+      if (!nodes || nodes.length === 0) return SCALE * 4;
+
+      // Find bounding box of all nodes
+      let minX = Infinity, maxX = -Infinity;
+      let minY = Infinity, maxY = -Infinity;
+      let minZ = Infinity, maxZ = -Infinity;
+
+      for (const node of nodes) {
+        minX = Math.min(minX, node.x || 0);
+        maxX = Math.max(maxX, node.x || 0);
+        minY = Math.min(minY, node.y || 0);
+        maxY = Math.max(maxY, node.y || 0);
+        minZ = Math.min(minZ, node.z || 0);
+        maxZ = Math.max(maxZ, node.z || 0);
+      }
+
+      // Calculate radius of sphere that contains all nodes
+      const dx = maxX - minX, dy = maxY - minY, dz = maxZ - minZ;
+      const radius = Math.hypot(dx, dy, dz) / 2;
+
+      // Add buffer (1.5x) to fit everything comfortably in view
+      return Math.max(SCALE * 1.5, radius * 1.5);
+    }
 
     function ht_updateCamera() {
       if (!Graph) return;
@@ -5772,7 +5809,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         const dist = Math.hypot(b.x - a.x, b.y - a.y);
         if (ht_twoHandPrevDist !== null) {
           const ratio = dist / ht_twoHandPrevDist;
-          ht_camR = Math.max(SCALE * 0.4, Math.min(SCALE * 6, ht_camR / ratio));
+          // Allow zoom out to 12x SCALE for very large graphs
+          ht_camR = Math.max(SCALE * 0.4, Math.min(SCALE * 12, ht_camR / ratio));
           ht_updateCamera();
         }
         ht_twoHandPrevDist = dist;
