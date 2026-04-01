@@ -401,9 +401,8 @@
     /* -- Info Panel (left side: network stats + clusters + key hint) -- */
     #info-panel {
       position: fixed;
-      top: 50%;
+      top: 16px;
       left: 20px;
-      transform: translateY(-50%);
       z-index: 10;
       background: var(--bg-panel);
       backdrop-filter: blur(12px);
@@ -413,7 +412,8 @@
       font-family: var(--mono);
       min-width: 220px;
       max-width: 240px;
-      overflow: hidden;
+      max-height: calc(100vh - 220px);
+      overflow-y: auto;
       box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.03);
     }
 
@@ -4704,15 +4704,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         .linkCurvature(isExternalGraph ? 0 : VFX.linkCurvatureVal.val)
         .linkVisibility(link => {
           if (link.topology !== currentLayout) return false;
-          // Cull edges for very large graphs (>2000 nodes): only show if within ~300 units
+          // Cull edges for very large graphs (>2000 nodes): only hide if BOTH endpoints are far from origin
           if (nodes.length > 2000) {
             const src = link.source, tgt = link.target;
             if (!src || !tgt) return true;
-            const dx = (src.x || 0) - (tgt.x || 0);
-            const dy = (src.y || 0) - (tgt.y || 0);
-            const dz = (src.z || 0) - (tgt.z || 0);
-            const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
-            return dist < 300; // Hide distant edges
+            const distSrc = Math.hypot(src.x || 0, src.y || 0, src.z || 0);
+            const distTgt = Math.hypot(tgt.x || 0, tgt.y || 0, tgt.z || 0);
+            // Show edge if at least one endpoint is close to graph center
+            return Math.min(distSrc, distTgt) < 2500;
           }
           return true;
         })
@@ -6028,12 +6027,15 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       if (ht_prevX !== null) {
         const dx = px - ht_prevX;
         const dy = py - ht_prevY;
-        ht_camPhi   -= dx * 3.5;
-        ht_camTheta -= dy * 2.0;
+        // Swapped axes: horizontal hand (dx) now controls theta (vertical tilt)
+        // Vertical hand (dy) now controls phi (horizontal orbit)
+        // Increased sensitivity: 3.5/2.0 → 6.0/4.0
+        ht_camTheta -= dx * 6.0;
+        ht_camPhi   -= dy * 4.0;
         ht_camTheta  = Math.max(0.1, Math.min(Math.PI - 0.1, ht_camTheta));
         const VEL_SMOOTH = 0.4;
-        ht_velPhi   = ht_velPhi   * VEL_SMOOTH + (-dx * 3.5) * (1 - VEL_SMOOTH);
-        ht_velTheta = ht_velTheta * VEL_SMOOTH + (-dy * 2.0) * (1 - VEL_SMOOTH);
+        ht_velTheta = ht_velTheta * VEL_SMOOTH + (-dx * 6.0) * (1 - VEL_SMOOTH);
+        ht_velPhi   = ht_velPhi   * VEL_SMOOTH + (-dy * 4.0) * (1 - VEL_SMOOTH);
         ht_updateCamera();
       }
       ht_prevX = px;
