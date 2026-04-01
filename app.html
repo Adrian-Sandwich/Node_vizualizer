@@ -6030,12 +6030,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         // Swapped axes: horizontal hand (dx) now controls theta (vertical tilt)
         // Vertical hand (dy) now controls phi (horizontal orbit)
         // Increased sensitivity: 3.5/2.0 → 6.0/4.0
-        ht_camTheta -= dx * 6.0;
-        ht_camPhi   -= dy * 4.0;
+        ht_camTheta += dx * 6.0;
+        ht_camPhi   += dy * 4.0;
         ht_camTheta  = Math.max(0.1, Math.min(Math.PI - 0.1, ht_camTheta));
         const VEL_SMOOTH = 0.4;
-        ht_velTheta = ht_velTheta * VEL_SMOOTH + (-dx * 6.0) * (1 - VEL_SMOOTH);
-        ht_velPhi   = ht_velPhi   * VEL_SMOOTH + (-dy * 4.0) * (1 - VEL_SMOOTH);
+        ht_velTheta = ht_velTheta * VEL_SMOOTH + (dx * 6.0) * (1 - VEL_SMOOTH);
+        ht_velPhi   = ht_velPhi   * VEL_SMOOTH + (dy * 4.0) * (1 - VEL_SMOOTH);
         ht_updateCamera();
       }
       ht_prevX = px;
