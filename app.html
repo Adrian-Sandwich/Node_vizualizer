@@ -1146,9 +1146,9 @@
 
   <script type="module">
     import { UMAP } from 'https://esm.sh/umap-js@1.4.0';
-    import ForceGraph3D from 'https://esm.sh/3d-force-graph@1?deps=three@0.175.0';
-    import * as THREE from 'https://esm.sh/three@0.175.0';
-    import { CSS2DRenderer, CSS2DObject } from 'https://esm.sh/three@0.175.0/addons/renderers/CSS2DRenderer.js';
+    import ForceGraph3D from 'https://esm.sh/3d-force-graph@1.73.0';
+    import * as THREE from 'https://esm.sh/three@r128';
+    import { CSS2DRenderer, CSS2DObject } from 'https://esm.sh/three@r128/addons/renderers/CSS2DRenderer.js';
 
     // ═══════════════════════════════════════════════
     // WebGPU Detection + Conditional Imports
@@ -1163,12 +1163,12 @@
         const adapter = await navigator.gpu.requestAdapter();
         if (adapter) {
           gpuDevice = await adapter.requestDevice();
-          const wgpuMod = await import('https://esm.sh/three@0.175.0/addons/renderers/webgpu/WebGPURenderer.js').catch(() => null);
+          const wgpuMod = await import('https://esm.sh/three@r128/addons/renderers/webgpu/WebGPURenderer.js').catch(() => null);
           if (!wgpuMod) throw new Error('WebGPU renderer not available');
           WebGPURenderer = wgpuMod.default || wgpuMod.WebGPURenderer;
-          const { PostProcessing } = await import('https://esm.sh/three@0.175.0/addons/postprocessing/PostProcessing.js');
-          const tsl = await import('https://esm.sh/three@0.175.0/tsl');
-          const bloomMod = await import('https://esm.sh/three@0.175.0/addons/tsl/display/BloomNode.js');
+          const { PostProcessing } = await import('https://esm.sh/three@r128/addons/postprocessing/PostProcessing.js');
+          const tsl = await import('https://esm.sh/three@r128/tsl');
+          const bloomMod = await import('https://esm.sh/three@r128/addons/tsl/display/BloomNode.js');
           bloomModule = { type: 'webgpu', PostProcessing, pass: tsl.pass, bloom: bloomMod.bloom };
           gpuAvailable = true;
         }
@@ -1178,9 +1178,9 @@
     }
 
     if (!gpuAvailable) {
-      const { EffectComposer } = await import('https://esm.sh/three@0.175.0/addons/postprocessing/EffectComposer.js');
-      const { RenderPass } = await import('https://esm.sh/three@0.175.0/addons/postprocessing/RenderPass.js');
-      const { UnrealBloomPass } = await import('https://esm.sh/three@0.175.0/addons/postprocessing/UnrealBloomPass.js');
+      const { EffectComposer } = await import('https://esm.sh/three@r128/addons/postprocessing/EffectComposer.js');
+      const { RenderPass } = await import('https://esm.sh/three@r128/addons/postprocessing/RenderPass.js');
+      const { UnrealBloomPass } = await import('https://esm.sh/three@r128/addons/postprocessing/UnrealBloomPass.js');
       bloomModule = { type: 'webgl', EffectComposer, RenderPass, UnrealBloomPass };
     }
 
