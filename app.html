@@ -586,7 +586,97 @@
       opacity: 0.8;
     }
 
-    #key-hint { display: none; }
+    #key-hint {
+      position: fixed;
+      bottom: 30px;
+      right: 30px;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 16px;
+      z-index: 100;
+      max-height: 70vh;
+      overflow-y: auto;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-dim);
+      display: none;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }
+
+    #key-hint.visible { display: block; }
+
+    .key-hint-header {
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      color: var(--text);
+      margin-bottom: 12px;
+      text-transform: uppercase;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 8px;
+    }
+
+    .key-hint-table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+
+    .key-hint-table tr {
+      height: 24px;
+    }
+
+    .key-hint-key {
+      padding-right: 16px;
+      color: var(--text-bright);
+      font-weight: 500;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    .key-hint-desc {
+      color: var(--text-dim);
+      text-align: left;
+      padding-left: 12px;
+      border-left: 1px solid var(--border);
+    }
+
+    .key-hint-divider {
+      height: 8px;
+    }
+
+    .key-hint-subheader {
+      font-weight: 600;
+      color: var(--text);
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+    }
+
+    .key-hint-subheader td {
+      padding-top: 8px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-size: 10px;
+    }
+
+    /* Scrollbar styling for shortcuts panel */
+    #key-hint::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    #key-hint::-webkit-scrollbar-track {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 3px;
+    }
+
+    #key-hint::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 3px;
+    }
+
+    #key-hint::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.25);
+    }
 
     /* -- Layout Description (below controls) -- */
     #layout-desc {
@@ -860,6 +950,30 @@
       letter-spacing: 0.06em; z-index: 30; pointer-events: none;
     }
 
+    /* Low confidence hand detection warning */
+    #cam-preview.ht-low-conf {
+      box-shadow: 0 0 8px 2px rgba(255, 165, 0, 0.6);
+    }
+
+    /* Quality reduction indicator */
+    .quality-reduced-label {
+      position: fixed;
+      top: 8px;
+      right: 8px;
+      background: rgba(255, 140, 0, 0.3);
+      color: rgba(255, 140, 0, 0.9);
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      padding: 3px 8px;
+      border-radius: 3px;
+      border: 1px solid rgba(255, 140, 0, 0.5);
+      z-index: 99;
+      pointer-events: none;
+      display: none;
+    }
+
     /* -- Markers (medoid, LLM center) -- */
     .marker.medoid {
       color: #222222;
@@ -1090,7 +1204,63 @@
       <div id="readout-knn" style="display:none">5</div>
     </div>
 
-    <div id="key-hint"></div>
+    <div id="key-hint">
+      <div class="key-hint-header">KEYBOARD SHORTCUTS</div>
+      <table class="key-hint-table">
+        <tr>
+          <td class="key-hint-key">H</td>
+          <td class="key-hint-desc">Reset camera</td>
+        </tr>
+        <tr>
+          <td class="key-hint-key">L</td>
+          <td class="key-hint-desc">Toggle labels</td>
+        </tr>
+        <tr>
+          <td class="key-hint-key">B</td>
+          <td class="key-hint-desc">Toggle bloom</td>
+        </tr>
+        <tr>
+          <td class="key-hint-key">P</td>
+          <td class="key-hint-desc">Toggle hand tracking pause</td>
+        </tr>
+        <tr>
+          <td class="key-hint-key">F</td>
+          <td class="key-hint-desc">Toggle fullscreen</td>
+        </tr>
+        <tr>
+          <td class="key-hint-key">Esc</td>
+          <td class="key-hint-desc">Close detail panel</td>
+        </tr>
+        <tr>
+          <td class="key-hint-key">Backspace</td>
+          <td class="key-hint-desc">Go back in node history</td>
+        </tr>
+        <tr class="key-hint-divider"></tr>
+        <tr class="key-hint-subheader">
+          <td colspan="2">HAND GESTURES</td>
+        </tr>
+        <tr>
+          <td class="key-hint-key">🤚 Palm</td>
+          <td class="key-hint-desc">Rotate graph</td>
+        </tr>
+        <tr>
+          <td class="key-hint-key">☝️ Point</td>
+          <td class="key-hint-desc">Select node (hold)</td>
+        </tr>
+        <tr>
+          <td class="key-hint-key">✌️ Peace</td>
+          <td class="key-hint-desc">Reset camera</td>
+        </tr>
+        <tr>
+          <td class="key-hint-key">👊 Fist</td>
+          <td class="key-hint-desc">Pause tracking</td>
+        </tr>
+        <tr>
+          <td class="key-hint-key">🙌 2 hands</td>
+          <td class="key-hint-desc">Zoom</td>
+        </tr>
+      </table>
+    </div>
 
     <!-- Layout Description: below controls -->
     <div id="layout-desc"></div>
@@ -1146,9 +1316,11 @@
 
   <script type="module">
     import { UMAP } from 'https://esm.sh/umap-js@1.4.0';
-    import ForceGraph3D from 'https://esm.sh/3d-force-graph@1?deps=three@0.175.0';
-    import * as THREE from 'https://esm.sh/three@0.175.0';
-    import { CSS2DRenderer, CSS2DObject } from 'https://esm.sh/three@0.175.0/addons/renderers/CSS2DRenderer.js';
+    import ForceGraph3D from 'https://esm.sh/3d-force-graph@1.73.0';
+    import * as THREE from 'https://esm.sh/three@r128';
+    import { CSS2DRenderer, CSS2DObject } from 'https://esm.sh/three@r128/addons/renderers/CSS2DRenderer.js';
+
+    console.log('[APP] Script module loaded + imports completed');
 
     // ═══════════════════════════════════════════════
     // WebGPU Detection + Conditional Imports
@@ -1163,12 +1335,12 @@
         const adapter = await navigator.gpu.requestAdapter();
         if (adapter) {
           gpuDevice = await adapter.requestDevice();
-          const wgpuMod = await import('https://esm.sh/three@0.175.0/addons/renderers/webgpu/WebGPURenderer.js').catch(() => null);
+          const wgpuMod = await import('https://esm.sh/three@r128/addons/renderers/webgpu/WebGPURenderer.js').catch(() => null);
           if (!wgpuMod) throw new Error('WebGPU renderer not available');
           WebGPURenderer = wgpuMod.default || wgpuMod.WebGPURenderer;
-          const { PostProcessing } = await import('https://esm.sh/three@0.175.0/addons/postprocessing/PostProcessing.js');
-          const tsl = await import('https://esm.sh/three@0.175.0/tsl');
-          const bloomMod = await import('https://esm.sh/three@0.175.0/addons/tsl/display/BloomNode.js');
+          const { PostProcessing } = await import('https://esm.sh/three@r128/addons/postprocessing/PostProcessing.js');
+          const tsl = await import('https://esm.sh/three@r128/tsl');
+          const bloomMod = await import('https://esm.sh/three@r128/addons/tsl/display/BloomNode.js');
           bloomModule = { type: 'webgpu', PostProcessing, pass: tsl.pass, bloom: bloomMod.bloom };
           gpuAvailable = true;
         }
@@ -1178,9 +1350,9 @@
     }
 
     if (!gpuAvailable) {
-      const { EffectComposer } = await import('https://esm.sh/three@0.175.0/addons/postprocessing/EffectComposer.js');
-      const { RenderPass } = await import('https://esm.sh/three@0.175.0/addons/postprocessing/RenderPass.js');
-      const { UnrealBloomPass } = await import('https://esm.sh/three@0.175.0/addons/postprocessing/UnrealBloomPass.js');
+      const { EffectComposer } = await import('https://esm.sh/three@r128/addons/postprocessing/EffectComposer.js');
+      const { RenderPass } = await import('https://esm.sh/three@r128/addons/postprocessing/RenderPass.js');
+      const { UnrealBloomPass } = await import('https://esm.sh/three@r128/addons/postprocessing/UnrealBloomPass.js');
       bloomModule = { type: 'webgl', EffectComposer, RenderPass, UnrealBloomPass };
     }
 
@@ -1903,20 +2075,31 @@
       }
     }
 
-    document.getElementById('load-graph-btn').addEventListener('click', () => {
-      document.getElementById('graph-file-input').click();
-    });
+    const loadGraphBtn = document.getElementById('load-graph-btn');
+    const graphFileInput = document.getElementById('graph-file-input');
 
-    document.getElementById('graph-file-input').addEventListener('change', async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      try {
-        await loadExternalGraph(file);
-      } catch (err) {
-        setupStatus.textContent = 'ERROR: ' + err.message.toUpperCase();
-        console.error(err);
-      }
-    });
+    if (loadGraphBtn) {
+      loadGraphBtn.addEventListener('click', () => {
+        graphFileInput?.click();
+      });
+    } else {
+      console.error('[INIT] load-graph-btn not found in DOM');
+    }
+
+    if (graphFileInput) {
+      graphFileInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        try {
+          await loadExternalGraph(file);
+        } catch (err) {
+          setupStatus.textContent = 'ERROR: ' + err.message.toUpperCase();
+          console.error(err);
+        }
+      });
+    } else {
+      console.error('[INIT] graph-file-input not found in DOM');
+    }
 
     // Load from cache (fallback button — no folder match needed)
     loadCacheBtn.addEventListener('click', async () => {
@@ -1935,15 +2118,53 @@
 
     // EXPORT JSON button — download current graph as .kgraph.json
     document.getElementById('export-kgraph-btn').addEventListener('click', () => {
-      if (!lastLoadedGraphData) {
+      let kgraphData;
+      if (lastLoadedGraphData) {
+        // External graph: use cached export data
+        kgraphData = {
+          format: 'kgraph',
+          version: '1.0',
+          ...lastLoadedGraphData
+        };
+      } else if (graphNodes && graphNodes.length > 0) {
+        // Notes mode: build export from current graph nodes and edges
+        const edges = labeledEdges || [];
+        kgraphData = {
+          format: 'kgraph',
+          version: '1.0',
+          nodes: graphNodes.map(n => ({
+            id: n.id,
+            label: n.name,
+            tag: n.cluster_name || '',
+            domain: n.cluster_id || '',
+            size: 10,
+            tooltip: n.filename || '',
+            props: {
+              filename: n.filename,
+              cluster_id: n.cluster_id,
+              cluster_name: n.cluster_name,
+              text_preview: n.text_preview
+            }
+          })),
+          edges: edges.map(e => ({
+            from: e.source,
+            to: e.target,
+            type: e.type || '',
+            label_forward: e.label_forward || '',
+            label_backward: e.label_backward || '',
+            weight: e.weight || 1.0
+          })),
+          meta: {
+            created_at: new Date().toISOString(),
+            node_count: graphNodes.length,
+            edge_count: edges.length,
+            source: 'notes-pipeline'
+          }
+        };
+      } else {
         alert('No graph loaded');
         return;
       }
-      const kgraphData = {
-        format: 'kgraph',
-        version: '1.0',
-        ...lastLoadedGraphData
-      };
       const jsonStr = JSON.stringify(kgraphData, null, 2);
       const blob = new Blob([jsonStr], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -3509,6 +3730,8 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         const totalTime = ((performance.now() - t0) / 1000).toFixed(1);
         console.log(`Pipeline total: ${totalTime}s`);
         setBootStage(`SCOPE ONLINE // ${notes.length} NODES // ${labeledEdges.length} EDGES // ${totalTime}s`, '');
+        // Show export button for notes mode
+        document.getElementById('export-kgraph-btn').classList.remove('hidden');
         setTimeout(hideBootStatus, 2000);
 
       } catch (err) {
@@ -3531,6 +3754,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
     let adjacency = {};
     let neighborSets = {};
     let nodeById = {};
+    let fpsMonitoringSetup = false;  // Track if FPS monitoring is already configured
     let allNodes = [];
     let edgeSets = { central: [], decentral: [], distrib: [] };
     let isExternalGraph = false;
@@ -3904,7 +4128,14 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       document.getElementById('dc-hash').textContent = shortHash;
       const fullEl = document.getElementById('dc-hash-full');
       fullEl.innerHTML = `${escapeHtml(name)} <span class="dc-copy">copy</span>`;
-      fullEl.onclick = () => { navigator.clipboard?.writeText(name); fullEl.querySelector('.dc-copy').textContent = 'copied!'; setTimeout(() => { fullEl.querySelector('.dc-copy').textContent = 'copy'; }, 1200); };
+      fullEl.onclick = () => {
+        // Copy node name + permalink hash
+        const nodeUrl = window.location.href.split('#')[0] + '#node=' + node.id;
+        const copyText = `${name}\n${nodeUrl}`;
+        navigator.clipboard?.writeText(copyText);
+        fullEl.querySelector('.dc-copy').textContent = 'copied!';
+        setTimeout(() => { fullEl.querySelector('.dc-copy').textContent = 'copy'; }, 1200);
+      };
 
       // ── Subtitle ──
       const subtitle = dcBuildSubtitle(node);
@@ -4270,14 +4501,61 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       }
     });
 
+    // Track label visibility state
+    let labelsVisible = true;
+
     document.addEventListener('keydown', e => {
-      if (e.key === 'Escape') hideDetailCard();
-      if (e.key === 'Backspace' && dcNavStack.length > 1 && document.getElementById('detail-card').classList.contains('visible')) {
+      const key = e.key.toLowerCase();
+
+      if (key === 'escape') {
+        hideDetailCard();
+      } else if (key === 'backspace' && dcNavStack.length > 1 && document.getElementById('detail-card').classList.contains('visible')) {
         e.preventDefault();
         dcNavigateBack();
-      }
-      if (e.key === 'h' && Graph) {
+      } else if (key === 'h' && Graph) {
+        // H: reset camera
         Graph.cameraPosition({ x: 0, y: 0, z: SCALE * 4 }, { x: 0, y: 0, z: 0 }, 1000);
+      } else if (key === 'l' && Graph) {
+        // L: toggle labels
+        labelsVisible = !labelsVisible;
+        Graph.graphData().nodes.forEach(n => {
+          const label = n.__labelDiv;
+          if (label) label.style.opacity = labelsVisible ? String(VFX.labelAlpha?.val ?? 1) : '0';
+        });
+      } else if (key === 'b') {
+        // B: toggle bloom
+        if (VFX.bloomStrength) {
+          VFX.bloomStrength.val = VFX.bloomStrength.val === 0 ? 0.5 : 0;
+          if (Graph) Graph.refresh();
+        }
+      } else if (key === 'p') {
+        // P: toggle hand tracking pause
+        if (appState === 'main') {
+          htPaused = !htPaused;
+          const badge = document.getElementById('ht-paused-badge');
+          const hint = document.getElementById('ht-pause-hint');
+          if (htPaused) {
+            badge?.classList.add('visible');
+            if (hint) hint.textContent = 'puno para reactivar';
+          } else {
+            badge?.classList.remove('visible');
+            if (hint) hint.textContent = '';
+          }
+        }
+      } else if (key === 'f') {
+        // F: toggle fullscreen
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen().catch(err => console.warn('Fullscreen failed:', err));
+        } else {
+          document.exitFullscreen();
+        }
+      } else if (key === '?' || key === '/') {
+        // ?: show/hide keyboard shortcuts
+        e.preventDefault();
+        const keyHint = document.getElementById('key-hint');
+        if (keyHint) {
+          keyHint.classList.toggle('visible');
+        }
       }
     });
 
@@ -4875,6 +5153,93 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           ht_camR = calculateOptimalZoom();
           ht_initialZoomCalculated = true;
         }, 100);
+      }
+
+      // Auto-select node from URL hash if present
+      setTimeout(() => {
+        const hash = window.location.hash;
+        const nodeMatch = hash.match(/node=([^&]+)/);
+        if (nodeMatch) {
+          const nodeId = decodeURIComponent(nodeMatch[1]);
+          const node = nodes.find(n => n.id === nodeId);
+          if (node) {
+            handleNodeClick(node);
+            // Fly camera to the selected node
+            Graph.cameraPosition(
+              { x: node.x || 0, y: node.y || 0, z: (node.z || 0) + SCALE * 2 },
+              { x: node.x || 0, y: node.y || 0, z: node.z || 0 },
+              1200
+            );
+          }
+        }
+      }, 500);
+
+      // Set up FPS monitoring and adaptive quality (only once)
+      if (!fpsMonitoringSetup) {
+        fpsMonitoringSetup = true;
+        let fpsFrames = [];
+        const MAX_FPS_SAMPLES = 60;
+        let lastFrameTime = performance.now();
+        let fpsUpdateCounter = 0;
+        const FPS_UPDATE_INTERVAL = 30;
+        let qualityState = 'normal';
+        let fpsRecoveryFrames = 0;
+        const FPS_RECOVERY_THRESHOLD = 60;
+        let userBloomStrength = VFX.bloomStrength?.val ?? 0.5;
+
+        const fpsBadge = document.getElementById('fps-badge');
+        Graph.onRenderFramePost(() => {
+          const now = performance.now();
+          const delta = now - lastFrameTime;
+          lastFrameTime = now;
+          if (delta > 0) {
+            const fps = 1000 / delta;
+            fpsFrames.push(fps);
+            if (fpsFrames.length > MAX_FPS_SAMPLES) fpsFrames.shift();
+          }
+          fpsUpdateCounter++;
+          if (fpsUpdateCounter >= FPS_UPDATE_INTERVAL) {
+            fpsUpdateCounter = 0;
+            const avgFps = fpsFrames.length > 0 ? fpsFrames.reduce((a, b) => a + b) / fpsFrames.length : 0;
+            if (fpsBadge) fpsBadge.textContent = avgFps.toFixed(0) + ' fps';
+
+            // Adaptive quality
+            if (avgFps < 20) {
+              if (qualityState !== 'reduced') {
+                qualityState = 'reduced';
+                userBloomStrength = VFX.bloomStrength?.val ?? 0.5;
+                if (VFX.bloomStrength) VFX.bloomStrength.val = 0;
+                if (VFX.particleCount) VFX.particleCount.val = 0;
+                Graph.refresh();
+                const qualityLabel = document.querySelector('.quality-reduced-label');
+                if (qualityLabel) qualityLabel.style.display = 'block';
+              }
+              fpsRecoveryFrames = 0;
+            } else if (avgFps < 30) {
+              if (qualityState !== 'reduced') {
+                qualityState = 'reduced';
+                userBloomStrength = VFX.bloomStrength?.val ?? 0.5;
+                if (VFX.bloomStrength) VFX.bloomStrength.val = 0;
+                if (VFX.particleCount) VFX.particleCount.val = 0;
+                Graph.refresh();
+                const qualityLabel = document.querySelector('.quality-reduced-label');
+                if (qualityLabel) qualityLabel.style.display = 'block';
+              }
+              fpsRecoveryFrames = 0;
+            } else if (avgFps > 45 && qualityState === 'reduced') {
+              fpsRecoveryFrames++;
+              if (fpsRecoveryFrames >= FPS_RECOVERY_THRESHOLD) {
+                qualityState = 'normal';
+                if (VFX.bloomStrength) VFX.bloomStrength.val = userBloomStrength;
+                if (VFX.particleCount) VFX.particleCount.val = 30;
+                Graph.refresh();
+                const qualityLabel = document.querySelector('.quality-reduced-label');
+                if (qualityLabel) qualityLabel.style.display = 'none';
+                fpsRecoveryFrames = 0;
+              }
+            }
+          }
+        });
       }
     }
 
@@ -5529,10 +5894,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     const HT_HOVER_FRAMES   = 6;    // consecutive frames needed to commit hover change
     const HT_RELEASE_FRAMES = 120;  // 2s without hand → re-enable mouse
     let ht_zoomCooldown     = 0;    // frames to ignore after zoom ends
+    const HT_MIN_CONFIDENCE = 0.75; // minimum hand detection confidence threshold
+    const HT_LOW_CONF_THRESHOLD = 0.85; // confidence below this triggers visual warning
+    let ht_zoomPrimed = false;      // stabilize zoom entry: skip zoom on first 2-hand detection frame
     // Fist-pause system
     let htPaused            = false;  // hand tracking paused?
     let htPauseFistFrames   = 0;      // frames fist held for pause toggle
-    const HT_PAUSE_FRAMES  = 15;     // ~500ms at 30fps to toggle pause (faster response)
+    const HT_PAUSE_FRAMES   = 15;    // ~500ms at 30fps to enable pause
+    const HT_UNPAUSE_FRAMES = 45;    // ~1500ms at 30fps to disable pause (3x longer)
     const HT_ZOOM_COOLDOWN  = 10;   // ~330ms grace period after zoom
 
     // Fist-still detection for reset
@@ -5743,7 +6112,24 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const video = document.getElementById('ht-video');
       if (video.readyState >= 2) ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      const hands = results.multiHandLandmarks || [];
+      // Filter hands by confidence score
+      const rawHands = results.multiHandLandmarks || [];
+      const handedness = results.multiHandedness || [];
+      const hands = rawHands.filter((_, i) => {
+        const conf = handedness[i]?.score ?? 1;
+        return conf >= HT_MIN_CONFIDENCE;
+      });
+
+      // Track if any hand has low confidence (visual warning)
+      const hasLowConfidence = rawHands.some((_, i) => {
+        const conf = handedness[i]?.score ?? 1;
+        return conf >= HT_MIN_CONFIDENCE && conf < HT_LOW_CONF_THRESHOLD;
+      });
+      const camPreview = document.getElementById('cam-preview');
+      if (camPreview) {
+        if (hasLowConfidence) camPreview.classList.add('ht-low-conf');
+        else camPreview.classList.remove('ht-low-conf');
+      }
 
       // No hands
       if (hands.length === 0) {
@@ -5813,13 +6199,17 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         }
         const a = hands[0][9], b = hands[1][9];
         const dist = Math.hypot(b.x - a.x, b.y - a.y);
-        if (ht_twoHandPrevDist !== null) {
+        // Stabilize zoom entry: skip zoom on first 2-hand frame, apply zoom from frame 2 onwards
+        if (!ht_zoomPrimed) {
+          ht_zoomPrimed = true;
+          ht_twoHandPrevDist = dist;
+        } else if (ht_twoHandPrevDist !== null) {
           const ratio = dist / ht_twoHandPrevDist;
           // Allow zoom out to 12x SCALE for very large graphs
           ht_camR = Math.max(SCALE * 0.4, Math.min(SCALE * 12, ht_camR / ratio));
           ht_updateCamera();
+          ht_twoHandPrevDist = dist;
         }
-        ht_twoHandPrevDist = dist;
         ht_prevX           = null;
         ht_pointFrames     = 0;
         ht_fistFrames      = 0;
@@ -5833,6 +6223,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         return;
       }
       ht_twoHandPrevDist = null;
+      ht_zoomPrimed = false;
       if (ht_wasTwoHands) {
         ht_zoomCooldown = HT_ZOOM_COOLDOWN;
         ht_wasTwoHands = false;
@@ -5858,8 +6249,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       // ── Fist hold → toggle pause/resume ─────────────────────────────────
       if (gesture === 'fist') {
         htPauseFistFrames++;
-        const pct = Math.min(1, htPauseFistFrames / HT_PAUSE_FRAMES);
-        if (htPauseFistFrames >= HT_PAUSE_FRAMES) {
+        const requiredFrames = htPaused ? HT_UNPAUSE_FRAMES : HT_PAUSE_FRAMES;
+        const pct = Math.min(1, htPauseFistFrames / requiredFrames);
+        if (htPauseFistFrames >= requiredFrames) {
           htPaused = !htPaused;
           htPauseFistFrames = 0;
           const badge = document.getElementById('ht-paused-badge');
@@ -6232,12 +6624,23 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       { attributes: true, attributeFilter: ['class'] });
 
     // ═══════════════════════════════════════════════
-    // Renderer Badge (bottom-right debug indicator)
+    // Renderer Badge + FPS Counter (bottom-right debug indicator)
     // ═══════════════════════════════════════════════
     const rendererBadge = document.createElement('div');
     rendererBadge.textContent = gpuAvailable ? 'WebGPU' : 'WebGL';
     rendererBadge.style.cssText = 'position:fixed;bottom:8px;right:8px;font:11px var(--mono);color:var(--text-dim);opacity:0.5;z-index:99;pointer-events:none;';
     document.body.appendChild(rendererBadge);
+
+    const fpsBadge = document.createElement('div');
+    fpsBadge.id = 'fps-badge';
+    fpsBadge.textContent = '?? fps';
+    fpsBadge.style.cssText = 'position:fixed;bottom:8px;right:80px;font:11px var(--mono);color:var(--text-dim);opacity:0.5;z-index:99;pointer-events:none;';
+    document.body.appendChild(fpsBadge);
+
+    const qualityLabel = document.createElement('div');
+    qualityLabel.className = 'quality-reduced-label';
+    qualityLabel.textContent = '⚡ quality reduced';
+    document.body.appendChild(qualityLabel);
 
   </script>
 
