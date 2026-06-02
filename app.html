@@ -1150,6 +1150,8 @@
     import * as THREE from 'https://esm.sh/three@r128';
     import { CSS2DRenderer, CSS2DObject } from 'https://esm.sh/three@r128/addons/renderers/CSS2DRenderer.js';
 
+    console.log('[APP] Script module loaded + imports completed');
+
     // ═══════════════════════════════════════════════
     // WebGPU Detection + Conditional Imports
     // ═══════════════════════════════════════════════
@@ -1890,33 +1892,53 @@
 
         setBootStage('LOADING GRAPH...', `${mapped.nodes.length} NODES`);
 
-        await initGraph(mapped.nodes, mapped.edges);
-        buildLegend(mapped.clusterNames);
-        buildClusterLabels(mapped.clusterNames);
-        buildReadouts(mapped.nodes.length, mapped.edges.length);
+        try {
+          await initGraph(mapped.nodes, mapped.edges);
+          buildLegend(mapped.clusterNames);
+          buildClusterLabels(mapped.clusterNames);
+          // Force DOM update for readouts
+          await new Promise(r => setTimeout(r, 0));
+          buildReadouts(mapped.nodes.length, mapped.edges.length);
 
-        setBootStage(`GRAPH ONLINE // ${mapped.nodes.length} NODES // ${mapped.edges.length} EDGES`, '');
-        setTimeout(hideBootStatus, 2000);
+          setBootStage(`GRAPH ONLINE // ${mapped.nodes.length} NODES // ${mapped.edges.length} EDGES`, '');
+          setTimeout(hideBootStatus, 2000);
+        } catch (initErr) {
+          console.error('[initGraph failed]', initErr);
+          setBootStage('GRAPH INIT FAILED', initErr.message);
+          throw initErr;
+        }
       } catch (err) {
         console.error('[loadExternalGraph] Error:', err);
+        setBootStage('FAILED TO LOAD GRAPH', err.message);
         setupStatus.textContent = 'ERROR: ' + err.message.toUpperCase();
       }
     }
 
-    document.getElementById('load-graph-btn').addEventListener('click', () => {
-      document.getElementById('graph-file-input').click();
-    });
+    const loadGraphBtn = document.getElementById('load-graph-btn');
+    const graphFileInput = document.getElementById('graph-file-input');
 
-    document.getElementById('graph-file-input').addEventListener('change', async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      try {
-        await loadExternalGraph(file);
-      } catch (err) {
-        setupStatus.textContent = 'ERROR: ' + err.message.toUpperCase();
-        console.error(err);
-      }
-    });
+    if (loadGraphBtn) {
+      loadGraphBtn.addEventListener('click', () => {
+        graphFileInput?.click();
+      });
+    } else {
+      console.error('[INIT] load-graph-btn not found in DOM');
+    }
+
+    if (graphFileInput) {
+      graphFileInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        try {
+          await loadExternalGraph(file);
+        } catch (err) {
+          setupStatus.textContent = 'ERROR: ' + err.message.toUpperCase();
+          console.error(err);
+        }
+      });
+    } else {
+      console.error('[INIT] graph-file-input not found in DOM');
+    }
 
     // Load from cache (fallback button — no folder match needed)
     loadCacheBtn.addEventListener('click', async () => {
@@ -5080,8 +5102,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     }
 
     function buildReadouts(nodeCount, edgeCount) {
-      document.getElementById('readout-nodes').textContent = nodeCount.toLocaleString();
-      document.getElementById('readout-edges').textContent = edgeCount.toLocaleString();
+      console.log('[buildReadouts]', {nodeCount, edgeCount});
+      const nodesEl = document.getElementById('readout-nodes');
+      const edgesEl = document.getElementById('readout-edges');
+      if (!nodesEl) console.error('readout-nodes element not found!');
+      if (!edgesEl) console.error('readout-edges element not found!');
+      if (nodesEl) nodesEl.textContent = nodeCount.toLocaleString();
+      if (edgesEl) edgesEl.textContent = edgeCount.toLocaleString();
     }
 
     // ═══════════════════════════════════════════════
@@ -5532,7 +5559,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // Fist-pause system
     let htPaused            = false;  // hand tracking paused?
     let htPauseFistFrames   = 0;      // frames fist held for pause toggle
-    const HT_PAUSE_FRAMES  = 15;     // ~500ms at 30fps to toggle pause (faster response)
+    const HT_PAUSE_FRAMES   = 15;    // ~500ms at 30fps to enable pause
+    const HT_UNPAUSE_FRAMES = 45;    // ~1500ms at 30fps to disable pause (3x longer)
     const HT_ZOOM_COOLDOWN  = 10;   // ~330ms grace period after zoom
 
     // Fist-still detection for reset
@@ -5858,8 +5886,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       // ── Fist hold → toggle pause/resume ─────────────────────────────────
       if (gesture === 'fist') {
         htPauseFistFrames++;
-        const pct = Math.min(1, htPauseFistFrames / HT_PAUSE_FRAMES);
-        if (htPauseFistFrames >= HT_PAUSE_FRAMES) {
+        const requiredFrames = htPaused ? HT_UNPAUSE_FRAMES : HT_PAUSE_FRAMES;
+        const pct = Math.min(1, htPauseFistFrames / requiredFrames);
+        if (htPauseFistFrames >= requiredFrames) {
           htPaused = !htPaused;
           htPauseFistFrames = 0;
           const badge = document.getElementById('ht-paused-badge');
