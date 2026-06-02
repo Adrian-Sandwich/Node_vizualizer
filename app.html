@@ -6240,8 +6240,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         width: CAM_W,
         height: CAM_H
       });
-      cam.start();
-      ht_setLabel('LOADING MODELS...');
+      try {
+        cam.start();
+        console.log('[ht_init] Camera started successfully');
+        ht_setLabel('LOADING MODELS...');
+      } catch (err) {
+        console.error('[ht_init] Camera start failed:', err);
+        ht_setLabel('CAMERA ERROR: ' + err.message);
+      }
     }
 
     // Start hand tracking when the setup screen is hidden (graph is ready)
