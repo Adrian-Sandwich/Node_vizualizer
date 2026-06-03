@@ -1017,6 +1017,18 @@
       color: #444444;
       opacity: 0.7;
     }
+    .node-label--external {
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 500;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 2px 6px;
+      border-radius: 3px;
+      white-space: nowrap;
+      pointer-events: auto;
+      transition: opacity 0.2s ease;
+      color: #ffffff;
+    }
 
     .node-label.label-selected {
       opacity: 1 !important;
@@ -3194,6 +3206,24 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         group.add(ringMesh);
         node.__ringMat = ringMat;
         node.__ringMesh = ringMesh;
+
+        // Add label for external graphs too
+        const nodeName = node.name || node.id || '';
+        if (nodeName) {
+          const div = document.createElement('div');
+          div.className = 'node-label node-label--external';
+          div.style.color = VFX.labelColor.val;
+          div.style.opacity = '0';
+          div.style.fontSize = '11px';
+          div.textContent = nodeName.length > 20 ? nodeName.substring(0, 17) + '...' : nodeName;
+          div.style.pointerEvents = 'auto';
+          div.style.cursor = 'pointer';
+          div.onclick = (e) => { e.stopPropagation(); handleNodeClick(node); };
+          const labelObj = new CSS2DObject(div);
+          group.add(labelObj);
+          node.__labelDiv = div;
+          node.__labelObj = labelObj;
+        }
       } else {
         // Notes pipeline: hit sprite + CSS2D label
         const hitMat = new THREE.SpriteMaterial({
@@ -4877,12 +4907,36 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
             const graphEl = document.getElementById('graph');
             const w = graphEl.clientWidth, h = graphEl.clientHeight;
             const tooMany = nodes.length > 500;
+
+            // Calculate zoom level for label visibility
+            const cam = Graph.camera();
+            const camPos = cam.position;
+            const zoomLevel = Math.sqrt(camPos.x * camPos.x + camPos.y * camPos.y + camPos.z * camPos.z);
+            const LABEL_ZOOM_THRESHOLD = 1500; // Show labels when zoomed in past this distance
+
             if (tooMany) {
               nodes.forEach(n => {
                 if (!n.__labelDiv) return;
                 const sc = Graph.graph2ScreenCoords(n.x, n.y, n.z);
                 const inView = sc.x > -200 && sc.x < w + 200 && sc.y > -200 && sc.y < h + 200;
-                n.__labelDiv.style.display = inView ? '' : 'none';
+                // For external graphs, also control opacity based on zoom
+                if (n.__largeGraph) {
+                  const showLabel = inView && zoomLevel < LABEL_ZOOM_THRESHOLD;
+                  n.__labelDiv.style.opacity = showLabel ? '1' : '0';
+                  n.__labelDiv.style.pointerEvents = showLabel ? 'auto' : 'none';
+                } else {
+                  n.__labelDiv.style.display = inView ? '' : 'none';
+                }
+              });
+            } else {
+              // Smaller graphs: always manage zoom-based visibility for external
+              nodes.forEach(n => {
+                if (!n.__labelDiv) return;
+                if (n.__largeGraph) {
+                  const showLabel = zoomLevel < LABEL_ZOOM_THRESHOLD;
+                  n.__labelDiv.style.opacity = showLabel ? '1' : '0';
+                  n.__labelDiv.style.pointerEvents = showLabel ? 'auto' : 'none';
+                }
               });
             }
           }
