@@ -1259,7 +1259,7 @@
         </div>
       </div>
       <div style="border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px;">
-        <button id="physics-toggle" class="physics-btn active" onclick="togglePhysicsLayout()" title="Toggle between Physics (forces) and Tree layout">PHYSICS</button>
+        <button id="physics-toggle" class="physics-btn active" title="Toggle between Physics (forces) and Tree layout">PHYSICS</button>
       </div>
       <button class="stats-toggle" onclick="toggleStatsPanel()" title="Close">×</button>
     </div>
@@ -6639,6 +6639,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     rendererBadge.textContent = gpuAvailable ? 'WebGPU' : 'WebGL';
     rendererBadge.style.cssText = 'position:fixed;bottom:8px;right:8px;font:11px var(--mono);color:var(--text-dim);opacity:0.5;z-index:99;pointer-events:none;';
     document.body.appendChild(rendererBadge);
+
+    // ═══════════════════════════════════════════════
+    // Physics Toggle Event Listener
+    // ═══════════════════════════════════════════════
+    document.getElementById('physics-toggle').addEventListener('click', togglePhysicsLayout);
 
   </script>
 
