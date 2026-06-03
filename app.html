@@ -4818,6 +4818,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         .nodeThreeObject(node => createNodeObject(node))
         .nodeThreeObjectExtend(false)
         .nodeLabel(node => buildNodeTooltip(node))
+        .pointerTooltipStyle(() => ({ pointerEvents: 'none', opacity: 0 }))
         .linkColor(link => getLinkColor(link))
         .linkWidth(isExternalGraph ? 0.3 : (link => getLinkWidth(link)))
         .linkOpacity(1.0)
