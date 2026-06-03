@@ -5382,21 +5382,30 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         });
       }
 
-      // Calculate positions by level (radial expansion)
+      // Count nodes per level and assign index within level during single pass
       const levelCounts = {};
-      Object.values(levelMap).forEach(level => {
-        levelCounts[level] = (levelCounts[level] || 0) + 1;
+      const levelIndex = {};
+      nodes.forEach(n => {
+        const level = levelMap[n.id] || 0;
+        if (levelCounts[level] === undefined) levelCounts[level] = 0;
+        levelIndex[n.id] = levelCounts[level];
+        levelCounts[level]++;
       });
 
       nodes.forEach(n => {
         const level = levelMap[n.id] || 0;
-        const radius = Math.max(50, level * 200);
-        const angle = (Object.keys(levelCounts).filter(l => parseInt(l) === level).indexOf(n.id) / Math.max(1, levelCounts[level])) * Math.PI * 2;
+        const radius = Math.max(100, level * 150);
+        const idx = levelIndex[n.id];
+        const count = levelCounts[level];
+        // Spread across full circle + slight randomness to avoid exact overlap
+        const angle = (idx / Math.max(1, count)) * Math.PI * 2;
+        // Distribute z slightly so same-level nodes aren't perfectly flat
+        const zSpread = (idx % 5 - 2) * 20;
 
         positions[n.id] = {
           x: Math.cos(angle) * radius,
           y: Math.sin(angle) * radius,
-          z: level * 150
+          z: level * 80 + zSpread
         };
       });
 
