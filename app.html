@@ -4902,26 +4902,56 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       let _labelFrame = 0;
       (function renderLabels() {
         if (Graph) {
-          if (!_labelsHiddenByDefault && ++_labelFrame % 3 === 0) {
-            const nodes = Graph.graphData().nodes;
+          const nodes = Graph.graphData().nodes;
+          const cam = Graph.camera();
+          const camPos = cam.position;
+          const zoomLevel = Math.sqrt(camPos.x * camPos.x + camPos.y * camPos.y + camPos.z * camPos.z);
+          const LABEL_ZOOM_THRESHOLD = 1500;
+
+          // Performance culling: hide distant nodes to improve FPS
+          if (++_labelFrame % CULLING_UPDATE_INTERVAL === 0) {
+            culledNodeCount = 0;
+            nodes.forEach(n => {
+              if (!n.__sphereMesh) return;
+              // Calculate distance from camera
+              const dx = (n.x || 0) - camPos.x;
+              const dy = (n.y || 0) - camPos.y;
+              const dz = (n.z || 0) - camPos.z;
+              const distToNode = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+              // Cull nodes beyond distance threshold
+              const shouldCull = distToNode > cullingDistance;
+              if (shouldCull) {
+                n.__sphereMesh.visible = false;
+                n.__ringMesh.visible = false;
+                if (n.__labelDiv) n.__labelDiv.style.opacity = '0';
+                culledNodeCount++;
+              } else {
+                n.__sphereMesh.visible = true;
+                // Ring visibility based on selection state
+                if (n.__ringMesh) n.__ringMesh.visible = n.__isSelected || false;
+              }
+            });
+            // Log culling stats occasionally
+            if (_labelFrame % (CULLING_UPDATE_INTERVAL * 10) === 0) {
+              const cullRatio = (culledNodeCount / nodes.length * 100).toFixed(1);
+              console.log(`[Culling] ${culledNodeCount}/${nodes.length} nodes hidden (${cullRatio}%)`);
+            }
+          }
+
+          // Label visibility based on zoom
+          if (!_labelsHiddenByDefault && _labelFrame % 3 === 0) {
             const graphEl = document.getElementById('graph');
             const w = graphEl.clientWidth, h = graphEl.clientHeight;
             const tooMany = nodes.length > 500;
-
-            // Calculate zoom level for label visibility
-            const cam = Graph.camera();
-            const camPos = cam.position;
-            const zoomLevel = Math.sqrt(camPos.x * camPos.x + camPos.y * camPos.y + camPos.z * camPos.z);
-            const LABEL_ZOOM_THRESHOLD = 1500; // Show labels when zoomed in past this distance
 
             if (tooMany) {
               nodes.forEach(n => {
                 if (!n.__labelDiv) return;
                 const sc = Graph.graph2ScreenCoords(n.x, n.y, n.z);
                 const inView = sc.x > -200 && sc.x < w + 200 && sc.y > -200 && sc.y < h + 200;
-                // For external graphs, also control opacity based on zoom
                 if (n.__largeGraph) {
-                  const showLabel = inView && zoomLevel < LABEL_ZOOM_THRESHOLD;
+                  const showLabel = inView && zoomLevel < LABEL_ZOOM_THRESHOLD && n.__sphereMesh.visible;
                   n.__labelDiv.style.opacity = showLabel ? '1' : '0';
                   n.__labelDiv.style.pointerEvents = showLabel ? 'auto' : 'none';
                 } else {
@@ -4929,11 +4959,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
                 }
               });
             } else {
-              // Smaller graphs: always manage zoom-based visibility for external
               nodes.forEach(n => {
                 if (!n.__labelDiv) return;
                 if (n.__largeGraph) {
-                  const showLabel = zoomLevel < LABEL_ZOOM_THRESHOLD;
+                  const showLabel = zoomLevel < LABEL_ZOOM_THRESHOLD && n.__sphereMesh.visible;
                   n.__labelDiv.style.opacity = showLabel ? '1' : '0';
                   n.__labelDiv.style.pointerEvents = showLabel ? 'auto' : 'none';
                 }
@@ -5768,6 +5797,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let ht_prevY    = null;
     let ht_twoHandPrevDist = null;
     let ht_hoverNode = null;
+
+    // Performance culling
+    let cullingDistance = 3000;        // distance beyond which to cull nodes
+    let culledNodeCount = 0;           // track how many nodes are culled
+    const CULLING_UPDATE_INTERVAL = 30; // update culling every N frames
     let ht_pointFrames = 0;
     let ht_fistFrames  = 0;
     let ht_noHandFrames = 0;
