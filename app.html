@@ -3768,9 +3768,11 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
 
     function buildNodeTooltip(node) {
       if (isExternalGraph) {
+        const typeLabel = node.cluster_name || node._tag || 'Unknown';
+        const codeLabel = node.name || '';
         return `<div style="text-align:center;font-family:monospace;">`
-          + `<div style="font-weight:600;">${escapeHtml(node.name)}</div>`
-          + `<div style="color:#888888;font-size:11px;">${escapeHtml(node._tag || '')} / ${escapeHtml(node.cluster_name || '')}</div>`
+          + `<div style="font-weight:600;font-size:12px;">${escapeHtml(typeLabel)}</div>`
+          + `<div style="color:#888888;font-size:10px;margin-top:2px;">${escapeHtml(codeLabel)}</div>`
           + '</div>';
       }
       const markers = [];
