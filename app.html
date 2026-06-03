@@ -548,6 +548,75 @@
       line-height: 1.6;
     }
 
+    /* ── Stats Panel (top-right) ── */
+    #stats-panel {
+      position: fixed;
+      top: 16px;
+      right: 20px;
+      z-index: 15;
+      background: var(--bg-panel);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-family: var(--mono);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.03);
+      overflow: hidden;
+      max-width: 200px;
+    }
+    #stats-panel.hidden { display: none; }
+    .stats-header {
+      background: rgba(0,0,0,0.05);
+      padding: 10px 14px;
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      border-bottom: 1px solid var(--border);
+    }
+    .stats-content {
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .stats-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 10px;
+      gap: 8px;
+    }
+    .stat-label {
+      color: var(--text-dim);
+      flex: 1;
+    }
+    .stat-value {
+      font-weight: 700;
+      color: var(--text-bright);
+      min-width: 50px;
+      text-align: right;
+    }
+    .stats-toggle {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 20px;
+      height: 20px;
+      border: none;
+      background: transparent;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 18px;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: color 150ms;
+    }
+    .stats-toggle:hover { color: var(--text-bright); }
+
     /* ── Hover info box (top-left floating card) ── */
     #hover-info {
       position: fixed;
@@ -1134,6 +1203,38 @@
         <span id="dc-back-hint" style="display:none;color:var(--border)">|</span>
         <span id="dc-back-btn" style="display:none;cursor:pointer;" onclick="dcNavigateBack()">&#x2190; atras</span>
       </div>
+    </div>
+
+    <!-- Stats Panel: top-right -->
+    <div id="stats-panel" class="hidden">
+      <div class="stats-header">GRAPH STATS</div>
+      <div class="stats-content">
+        <div class="stats-row">
+          <div class="stat-label">Total Nodes</div>
+          <div class="stat-value" id="stat-nodes">0</div>
+        </div>
+        <div class="stats-row">
+          <div class="stat-label">Total Edges</div>
+          <div class="stat-value" id="stat-edges">0</div>
+        </div>
+        <div class="stats-row">
+          <div class="stat-label">Clusters</div>
+          <div class="stat-value" id="stat-clusters">0</div>
+        </div>
+        <div class="stats-row">
+          <div class="stat-label">Avg Degree</div>
+          <div class="stat-value" id="stat-avgdeg">0</div>
+        </div>
+        <div class="stats-row">
+          <div class="stat-label">Density</div>
+          <div class="stat-value" id="stat-density">0</div>
+        </div>
+        <div class="stats-row">
+          <div class="stat-label">Max Depth</div>
+          <div class="stat-value" id="stat-maxdepth">0</div>
+        </div>
+      </div>
+      <button class="stats-toggle" onclick="toggleStatsPanel()" title="Close">×</button>
     </div>
 
     <!-- Cluster Labels Overlay -->
@@ -5109,6 +5210,76 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       if (!edgesEl) console.error('readout-edges element not found!');
       if (nodesEl) nodesEl.textContent = nodeCount.toLocaleString();
       if (edgesEl) edgesEl.textContent = edgeCount.toLocaleString();
+      updateStatsPanel(nodeCount, edgeCount);
+    }
+
+    function updateStatsPanel(nodeCount, edgeCount) {
+      if (!Graph) return;
+      const nodes = Graph.graphData().nodes || [];
+      const links = Graph.graphData().links || [];
+
+      // Calculate statistics
+      const totalNodes = nodes.length;
+      const totalEdges = links.length;
+
+      // Count clusters
+      const clusters = new Set();
+      nodes.forEach(n => clusters.add(n.cluster_id));
+      const clusterCount = clusters.size;
+
+      // Average degree
+      const degreeMap = new Map();
+      links.forEach(l => {
+        const src = typeof l.source === 'object' ? l.source.id : l.source;
+        const tgt = typeof l.target === 'object' ? l.target.id : l.target;
+        degreeMap.set(src, (degreeMap.get(src) || 0) + 1);
+        degreeMap.set(tgt, (degreeMap.get(tgt) || 0) + 1);
+      });
+      const avgDegree = totalNodes > 0 ? (2 * totalEdges / totalNodes).toFixed(2) : 0;
+
+      // Density = actual edges / possible edges
+      const maxEdges = (totalNodes * (totalNodes - 1)) / 2;
+      const density = maxEdges > 0 ? (totalEdges / maxEdges).toFixed(3) : 0;
+
+      // Max depth (BFS from node 0)
+      let maxDepth = 0;
+      if (totalNodes > 0) {
+        const visited = new Set();
+        const queue = [[nodes[0], 0]];
+        visited.add(nodes[0].id);
+        while (queue.length > 0) {
+          const [node, depth] = queue.shift();
+          maxDepth = Math.max(maxDepth, depth);
+          links.forEach(l => {
+            const src = typeof l.source === 'object' ? l.source.id : l.source;
+            const tgt = typeof l.target === 'object' ? l.target.id : l.target;
+            if (src === node.id && !visited.has(tgt)) {
+              visited.add(tgt);
+              queue.push([nodes.find(n => n.id === tgt), depth + 1]);
+            }
+            if (tgt === node.id && !visited.has(src)) {
+              visited.add(src);
+              queue.push([nodes.find(n => n.id === src), depth + 1]);
+            }
+          });
+        }
+      }
+
+      // Update UI
+      document.getElementById('stat-nodes').textContent = totalNodes.toLocaleString();
+      document.getElementById('stat-edges').textContent = totalEdges.toLocaleString();
+      document.getElementById('stat-clusters').textContent = clusterCount;
+      document.getElementById('stat-avgdeg').textContent = avgDegree;
+      document.getElementById('stat-density').textContent = density;
+      document.getElementById('stat-maxdepth').textContent = maxDepth;
+
+      // Show panel
+      document.getElementById('stats-panel').classList.remove('hidden');
+      console.log('[updateStatsPanel]', {totalNodes, totalEdges, clusterCount, avgDegree, density, maxDepth});
+    }
+
+    function toggleStatsPanel() {
+      document.getElementById('stats-panel').classList.toggle('hidden');
     }
 
     // ═══════════════════════════════════════════════
