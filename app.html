@@ -3686,7 +3686,6 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
     let isExternalGraph = false;
     let externalGraphMeta = null;
     let lastLoadedGraphData = null;  // For exporting as .kgraph.json
-    let usePhysicsLayout = true;  // Toggle: true = forces, false = tree layout
     let treeLayoutPositions = {};  // Cache tree positions
 
     // ── Lookup builders ──
@@ -5412,72 +5411,116 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       return positions;
     }
 
-    function applyTreeLayout() {
+    function applyStaticLayout(positions) {
       if (!Graph) return;
       const nodes = Graph.graphData().nodes;
-      const links = Graph.graphData().links;
-
-      // Calculate tree positions if not cached
-      if (Object.keys(treeLayoutPositions).length === 0) {
-        treeLayoutPositions = calculateTreeLayout(nodes, links);
-      }
-
-      // Apply positions to nodes
       nodes.forEach(n => {
-        if (treeLayoutPositions[n.id]) {
-          n.x = treeLayoutPositions[n.id].x;
-          n.y = treeLayoutPositions[n.id].y;
-          n.z = treeLayoutPositions[n.id].z;
-          n.vx = 0;
-          n.vy = 0;
-          n.vz = 0;
+        if (positions[n.id]) {
+          n.x = positions[n.id].x;
+          n.y = positions[n.id].y;
+          n.z = positions[n.id].z;
+          n.vx = 0; n.vy = 0; n.vz = 0;
         }
       });
+      // Zero-out forces so simulation doesn't move nodes
+      const charge = Graph.d3Force('charge');
+      const link = Graph.d3Force('link');
+      if (charge) charge.strength(0);
+      if (link) link.strength(0);
+      Graph.d3ReheatSimulation();
+    }
 
-      // Disable all forces
-      Graph.d3Force('charge', null);
-      Graph.d3Force('link', null);
-      Graph.d3Force('center', null);
-      Graph.d3Force('position', null);
+    function applyTreeLayout() {
+      if (Object.keys(treeLayoutPositions).length === 0) {
+        const { nodes, links } = Graph.graphData();
+        treeLayoutPositions = calculateTreeLayout(nodes, links);
+      }
+      applyStaticLayout(treeLayoutPositions);
+    }
 
-      Graph.tickFrame();
+    function applyClusterLayout() {
+      if (Object.keys(clusterLayoutPositions).length === 0) {
+        const { nodes } = Graph.graphData();
+        clusterLayoutPositions = calculateClusterLayout(nodes);
+      }
+      applyStaticLayout(clusterLayoutPositions);
+    }
+
+    function calculateClusterLayout(nodes) {
+      const tagGroups = {};
+      nodes.forEach(n => {
+        const tag = n._tag || n.tag || 'Unknown';
+        if (!tagGroups[tag]) tagGroups[tag] = [];
+        tagGroups[tag].push(n);
+      });
+
+      const tags = Object.keys(tagGroups);
+      const clusterCenters = {};
+      const clusterRadius = 800;
+      tags.forEach((tag, i) => {
+        const phi = Math.acos(1 - 2 * (i + 0.5) / tags.length);
+        const theta = Math.PI * (1 + Math.sqrt(5)) * i;
+        clusterCenters[tag] = {
+          x: clusterRadius * Math.sin(phi) * Math.cos(theta),
+          y: clusterRadius * Math.sin(phi) * Math.sin(theta),
+          z: clusterRadius * Math.cos(phi)
+        };
+      });
+
+      const positions = {};
+      Object.entries(tagGroups).forEach(([tag, groupNodes]) => {
+        const center = clusterCenters[tag];
+        const innerRadius = Math.min(250, Math.sqrt(groupNodes.length) * 12);
+        groupNodes.forEach((n, i) => {
+          const phi = Math.acos(1 - 2 * (i + 0.5) / groupNodes.length);
+          const theta = Math.PI * (1 + Math.sqrt(5)) * i;
+          positions[n.id] = {
+            x: center.x + innerRadius * Math.sin(phi) * Math.cos(theta),
+            y: center.y + innerRadius * Math.sin(phi) * Math.sin(theta),
+            z: center.z + innerRadius * Math.cos(phi)
+          };
+        });
+      });
+      return positions;
     }
 
     function applyPhysicsForces() {
       if (!Graph) return;
-      const nodes = Graph.graphData().nodes;
-
-      // Re-enable forces with original parameters
+      const charge = Graph.d3Force('charge');
+      const link = Graph.d3Force('link');
       if (isExternalGraph) {
-        Graph.d3Force('charge').strength(-5);
-        Graph.d3Force('link').distance(50).strength(0.01);
+        if (charge) charge.strength(-5);
+        if (link) link.distance(50).strength(0.01);
       } else {
         Graph.d3Force('position', createPositionForce(0.18));
-        Graph.d3Force('center', null);
-        Graph.d3Force('link').strength(0.008).distance(100);
-        Graph.d3Force('charge').strength(-25);
+        if (charge) charge.strength(-25);
+        if (link) link.strength(0.008).distance(100);
       }
-
-      // Restart simulation
-      Graph.d3Force('link').distance(isExternalGraph ? 50 : 100);
-      Graph.d3Force('charge').strength(isExternalGraph ? -5 : -25);
-      Graph.tickFrame();
+      Graph.d3ReheatSimulation();
     }
+
+    // Cycle: physics → rings → clusters → physics
+    let layoutMode = 'physics';
+    let clusterLayoutPositions = {};
 
     function togglePhysicsLayout() {
       if (!Graph) return;
-
-      usePhysicsLayout = !usePhysicsLayout;
       const btn = document.getElementById('physics-toggle');
-
-      if (usePhysicsLayout) {
+      if (layoutMode === 'physics') {
+        layoutMode = 'rings';
+        btn.textContent = 'RINGS';
         btn.classList.add('active');
-        btn.textContent = 'PHYSICS';
-        applyPhysicsForces();
-      } else {
-        btn.classList.remove('active');
-        btn.textContent = 'TREE';
         applyTreeLayout();
+      } else if (layoutMode === 'rings') {
+        layoutMode = 'clusters';
+        btn.textContent = 'CLUSTERS';
+        btn.classList.add('active');
+        applyClusterLayout();
+      } else {
+        layoutMode = 'physics';
+        btn.textContent = 'PHYSICS';
+        btn.classList.remove('active');
+        applyPhysicsForces();
       }
     }
 
