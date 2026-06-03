@@ -616,6 +616,30 @@
       transition: color 150ms;
     }
     .stats-toggle:hover { color: var(--text-bright); }
+    .physics-btn {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid var(--border);
+      background: rgba(0,0,0,0.1);
+      color: var(--text-dim);
+      border-radius: 4px;
+      font-size: 9px;
+      font-weight: 600;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      transition: all 150ms;
+    }
+    .physics-btn:hover {
+      background: rgba(255,107,53,0.1);
+      color: #ff6b35;
+      border-color: #ff6b35;
+    }
+    .physics-btn.active {
+      background: rgba(255,107,53,0.2);
+      color: #ff6b35;
+      border-color: #ff6b35;
+    }
 
     /* ── Hover info box (top-left floating card) ── */
     #hover-info {
@@ -1233,6 +1257,9 @@
           <div class="stat-label">Max Depth</div>
           <div class="stat-value" id="stat-maxdepth">0</div>
         </div>
+      </div>
+      <div style="border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px;">
+        <button id="physics-toggle" class="physics-btn active" onclick="togglePhysicsLayout()" title="Toggle between Physics (forces) and Tree layout">PHYSICS</button>
       </div>
       <button class="stats-toggle" onclick="toggleStatsPanel()" title="Close">×</button>
     </div>
@@ -3659,6 +3686,8 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
     let isExternalGraph = false;
     let externalGraphMeta = null;
     let lastLoadedGraphData = null;  // For exporting as .kgraph.json
+    let usePhysicsLayout = true;  // Toggle: true = forces, false = tree layout
+    let treeLayoutPositions = {};  // Cache tree positions
 
     // ── Lookup builders ──
 
@@ -5312,6 +5341,135 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     function toggleStatsPanel() {
       document.getElementById('stats-panel').classList.toggle('hidden');
+    }
+
+    // ═══════════════════════════════════════════════
+    // Physics/Tree Layout Toggle
+    // ═══════════════════════════════════════════════
+
+    function calculateTreeLayout(nodes, links) {
+      const positions = {};
+      const visited = new Set();
+      const levelMap = {};  // nodeId -> depth level
+      const queue = [];
+
+      // Find root: node with highest connectivity or first node
+      let root = nodes[0];
+      let maxConnections = -1;
+      nodes.forEach(n => {
+        const connections = links.filter(l => l.source.id === n.id || l.target.id === n.id).length;
+        if (connections > maxConnections) {
+          maxConnections = connections;
+          root = n;
+        }
+      });
+
+      // BFS to assign levels
+      queue.push(root);
+      visited.add(root.id);
+      levelMap[root.id] = 0;
+
+      while (queue.length > 0) {
+        const current = queue.shift();
+        links.forEach(link => {
+          const neighbor = link.source.id === current.id ? link.target :
+                          link.target.id === current.id ? link.source : null;
+          if (neighbor && !visited.has(neighbor.id)) {
+            visited.add(neighbor.id);
+            levelMap[neighbor.id] = (levelMap[current.id] || 0) + 1;
+            queue.push(neighbor);
+          }
+        });
+      }
+
+      // Calculate positions by level (radial expansion)
+      const levelCounts = {};
+      Object.values(levelMap).forEach(level => {
+        levelCounts[level] = (levelCounts[level] || 0) + 1;
+      });
+
+      nodes.forEach(n => {
+        const level = levelMap[n.id] || 0;
+        const radius = Math.max(50, level * 200);
+        const angle = (Object.keys(levelCounts).filter(l => parseInt(l) === level).indexOf(n.id) / Math.max(1, levelCounts[level])) * Math.PI * 2;
+
+        positions[n.id] = {
+          x: Math.cos(angle) * radius,
+          y: Math.sin(angle) * radius,
+          z: level * 150
+        };
+      });
+
+      return positions;
+    }
+
+    function applyTreeLayout() {
+      if (!Graph) return;
+      const nodes = Graph.graphData().nodes;
+      const links = Graph.graphData().links;
+
+      // Calculate tree positions if not cached
+      if (Object.keys(treeLayoutPositions).length === 0) {
+        treeLayoutPositions = calculateTreeLayout(nodes, links);
+      }
+
+      // Apply positions to nodes
+      nodes.forEach(n => {
+        if (treeLayoutPositions[n.id]) {
+          n.x = treeLayoutPositions[n.id].x;
+          n.y = treeLayoutPositions[n.id].y;
+          n.z = treeLayoutPositions[n.id].z;
+          n.vx = 0;
+          n.vy = 0;
+          n.vz = 0;
+        }
+      });
+
+      // Disable all forces
+      Graph.d3Force('charge', null);
+      Graph.d3Force('link', null);
+      Graph.d3Force('center', null);
+      Graph.d3Force('position', null);
+
+      Graph.tickFrame();
+    }
+
+    function applyPhysicsForces() {
+      if (!Graph) return;
+      const nodes = Graph.graphData().nodes;
+
+      // Re-enable forces with original parameters
+      if (isExternalGraph) {
+        Graph.d3Force('charge').strength(-5);
+        Graph.d3Force('link').distance(50).strength(0.01);
+      } else {
+        Graph.d3Force('position', createPositionForce(0.18));
+        Graph.d3Force('center', null);
+        Graph.d3Force('link').strength(0.008).distance(100);
+        Graph.d3Force('charge').strength(-25);
+      }
+
+      // Restart simulation
+      Graph.d3Force('link').distance(isExternalGraph ? 50 : 100);
+      Graph.d3Force('charge').strength(isExternalGraph ? -5 : -25);
+      Graph.tickFrame();
+    }
+
+    function togglePhysicsLayout() {
+      if (!Graph) return;
+
+      usePhysicsLayout = !usePhysicsLayout;
+      const btn = document.getElementById('physics-toggle');
+
+      if (usePhysicsLayout) {
+        btn.classList.add('active');
+        btn.textContent = 'PHYSICS';
+        applyPhysicsForces();
+      } else {
+        btn.classList.remove('active');
+        btn.textContent = 'TREE';
+        applyTreeLayout();
+      }
     }
 
     // ═══════════════════════════════════════════════
