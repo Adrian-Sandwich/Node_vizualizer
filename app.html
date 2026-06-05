@@ -1167,7 +1167,7 @@
 
     console.log('[APP] Script loaded (UMD globals)');
 
-    (async function main() {
+    document.addEventListener('DOMContentLoaded', () => { (async function main() {
 
     // ═══════════════════════════════════════════════
     // WebGPU Detection — WebGPU not available in UMD, skip
@@ -6309,7 +6309,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     rendererBadge.style.cssText = 'position:fixed;bottom:8px;right:8px;font:11px var(--mono);color:var(--text-dim);opacity:0.5;z-index:99;pointer-events:none;';
     document.body.appendChild(rendererBadge);
 
-    })(); // end main()
+    })(); }); // end main() + DOMContentLoaded
 
   </script>
 
