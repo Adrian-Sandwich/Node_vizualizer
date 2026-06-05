@@ -12,6 +12,17 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/pose.js" crossorigin="anonymous"></script>
+  <!-- UMD builds — work on file:// without ES module restrictions -->
+  <script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.128.0/examples/js/renderers/CSS2DRenderer.js"></script>
+  <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+  <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+  <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+  <script src="https://unpkg.com/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+  <script src="https://unpkg.com/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+  <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+  <script src="https://unpkg.com/3d-force-graph@1.73.0/dist/3d-force-graph.min.js"></script>
+  <script src="https://unpkg.com/umap-js@1.4.0/lib/umap-js.js"></script>
   <style>
     /* ═══════════════════════════════════════════════
        CSS Custom Properties
@@ -1146,47 +1157,32 @@
 
   </div><!-- /main -->
 
-  <script type="module">
-    import { UMAP } from 'https://esm.sh/umap-js@1.4.0';
-    import ForceGraph3D from 'https://esm.sh/3d-force-graph@1.73.0';
-    import * as THREE from 'https://esm.sh/three@r128';
-    import { CSS2DRenderer, CSS2DObject } from 'https://esm.sh/three@r128/addons/renderers/CSS2DRenderer.js';
+  <script>
+    // UMD globals from script tags: THREE, ForceGraph3D
+    // three.js examples scripts attach to THREE namespace
+    const CSS2DRenderer = THREE.CSS2DRenderer;
+    const CSS2DObject = THREE.CSS2DObject;
+    // umap-js UMD exposes global UMAP or umapjs.UMAP
+    const UMAP = window.UMAP || (window.umapjs && window.umapjs.UMAP);
 
-    console.log('[APP] Script module loaded + imports completed');
+    console.log('[APP] Script loaded (UMD globals)');
+
+    (async function main() {
 
     // ═══════════════════════════════════════════════
-    // WebGPU Detection + Conditional Imports
+    // WebGPU Detection — WebGPU not available in UMD, skip
     // ═══════════════════════════════════════════════
-    let gpuAvailable = false;
-    let gpuDevice = null;
-    let WebGPURenderer = null;
-    let bloomModule;
+    const gpuAvailable = false;
+    const gpuDevice = null;
+    const WebGPURenderer = null;
 
-    try {
-      if (navigator.gpu) {
-        const adapter = await navigator.gpu.requestAdapter();
-        if (adapter) {
-          gpuDevice = await adapter.requestDevice();
-          const wgpuMod = await import('https://esm.sh/three@r128/addons/renderers/webgpu/WebGPURenderer.js').catch(() => null);
-          if (!wgpuMod) throw new Error('WebGPU renderer not available');
-          WebGPURenderer = wgpuMod.default || wgpuMod.WebGPURenderer;
-          const { PostProcessing } = await import('https://esm.sh/three@r128/addons/postprocessing/PostProcessing.js');
-          const tsl = await import('https://esm.sh/three@r128/tsl');
-          const bloomMod = await import('https://esm.sh/three@r128/addons/tsl/display/BloomNode.js');
-          bloomModule = { type: 'webgpu', PostProcessing, pass: tsl.pass, bloom: bloomMod.bloom };
-          gpuAvailable = true;
-        }
-      }
-    } catch (e) {
-      console.warn('WebGPU init failed, falling back to WebGL:', e);
-    }
-
-    if (!gpuAvailable) {
-      const { EffectComposer } = await import('https://esm.sh/three@r128/addons/postprocessing/EffectComposer.js');
-      const { RenderPass } = await import('https://esm.sh/three@r128/addons/postprocessing/RenderPass.js');
-      const { UnrealBloomPass } = await import('https://esm.sh/three@r128/addons/postprocessing/UnrealBloomPass.js');
-      bloomModule = { type: 'webgl', EffectComposer, RenderPass, UnrealBloomPass };
-    }
+    // WebGL bloom via preloaded UMD scripts
+    const bloomModule = {
+      type: 'webgl',
+      EffectComposer: THREE.EffectComposer,
+      RenderPass: THREE.RenderPass,
+      UnrealBloomPass: THREE.UnrealBloomPass,
+    };
 
     // ═══════════════════════════════════════════════
     // Parallel Execution Utilities
@@ -6313,6 +6309,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     rendererBadge.style.cssText = 'position:fixed;bottom:8px;right:8px;font:11px var(--mono);color:var(--text-dim);opacity:0.5;z-index:99;pointer-events:none;';
     document.body.appendChild(rendererBadge);
 
+    })(); // end main()
 
   </script>
 
