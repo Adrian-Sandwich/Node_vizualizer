@@ -18,6 +18,13 @@ Pre-converted `.kgraph.json` files ready to load in app.html.
 - **Types**: Person, CommerceDenue, Commerce, ElectoralSection, Occupation, etc.
 - **Source**: kg_nebula_bfs_3500_20260113_022814.html
 
+### grafo_muestra_matria.kgraph.json
+- **Format**: MatrIA (Mexican sociodemographic knowledge graph)
+- **Nodes**: 9,181
+- **Edges**: 25,453
+- **Domains**: spatial, environment, demographic, electoral, commerce, metrics, apps, personality, worship, health, poverty, crime
+- **Source**: grafo_muestra_matria.html
+
 ### jerarquia_interactiva.kgraph.json
 - **Format**: Hierarchy/Taxonomy
 - **Nodes**: 326

@@ -1,1 +1,3 @@
-grafo_prueba/*.html
+.DS_Store
+settings.local.json
+graphs/*.html
