@@ -12,6 +12,17 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/pose.js" crossorigin="anonymous"></script>
+  <!-- UMD builds — work on file:// without ES module restrictions -->
+  <script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.128.0/examples/js/renderers/CSS2DRenderer.js"></script>
+  <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+  <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+  <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+  <script src="https://unpkg.com/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+  <script src="https://unpkg.com/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+  <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+  <script src="https://unpkg.com/3d-force-graph@1.73.0/dist/3d-force-graph.min.js"></script>
+  <script src="https://unpkg.com/umap-js@1.4.0/lib/umap-js.js"></script>
   <style>
     /* ═══════════════════════════════════════════════
        CSS Custom Properties
@@ -1306,6 +1317,8 @@
       </div>
     </div>
 
+    <!-- Stats panel removed -->
+
     <!-- Cluster Labels Overlay -->
     <div id="cluster-labels"></div>
 
@@ -1314,47 +1327,32 @@
 
   </div><!-- /main -->
 
-  <script type="module">
-    import { UMAP } from 'https://esm.sh/umap-js@1.4.0';
-    import ForceGraph3D from 'https://esm.sh/3d-force-graph@1.73.0';
-    import * as THREE from 'https://esm.sh/three@r128';
-    import { CSS2DRenderer, CSS2DObject } from 'https://esm.sh/three@r128/addons/renderers/CSS2DRenderer.js';
+  <script>
+    // UMD globals from script tags: THREE, ForceGraph3D
+    // three.js examples scripts attach to THREE namespace
+    const CSS2DRenderer = THREE.CSS2DRenderer;
+    const CSS2DObject = THREE.CSS2DObject;
+    // umap-js UMD exposes global UMAP or umapjs.UMAP
+    const UMAP = window.UMAP || (window.umapjs && window.umapjs.UMAP);
 
-    console.log('[APP] Script module loaded + imports completed');
+    console.log('[APP] Script loaded (UMD globals)');
+
+    document.addEventListener('DOMContentLoaded', () => { (async function main() {
 
     // ═══════════════════════════════════════════════
-    // WebGPU Detection + Conditional Imports
+    // WebGPU Detection — WebGPU not available in UMD, skip
     // ═══════════════════════════════════════════════
-    let gpuAvailable = false;
-    let gpuDevice = null;
-    let WebGPURenderer = null;
-    let bloomModule;
+    const gpuAvailable = false;
+    const gpuDevice = null;
+    const WebGPURenderer = null;
 
-    try {
-      if (navigator.gpu) {
-        const adapter = await navigator.gpu.requestAdapter();
-        if (adapter) {
-          gpuDevice = await adapter.requestDevice();
-          const wgpuMod = await import('https://esm.sh/three@r128/addons/renderers/webgpu/WebGPURenderer.js').catch(() => null);
-          if (!wgpuMod) throw new Error('WebGPU renderer not available');
-          WebGPURenderer = wgpuMod.default || wgpuMod.WebGPURenderer;
-          const { PostProcessing } = await import('https://esm.sh/three@r128/addons/postprocessing/PostProcessing.js');
-          const tsl = await import('https://esm.sh/three@r128/tsl');
-          const bloomMod = await import('https://esm.sh/three@r128/addons/tsl/display/BloomNode.js');
-          bloomModule = { type: 'webgpu', PostProcessing, pass: tsl.pass, bloom: bloomMod.bloom };
-          gpuAvailable = true;
-        }
-      }
-    } catch (e) {
-      console.warn('WebGPU init failed, falling back to WebGL:', e);
-    }
-
-    if (!gpuAvailable) {
-      const { EffectComposer } = await import('https://esm.sh/three@r128/addons/postprocessing/EffectComposer.js');
-      const { RenderPass } = await import('https://esm.sh/three@r128/addons/postprocessing/RenderPass.js');
-      const { UnrealBloomPass } = await import('https://esm.sh/three@r128/addons/postprocessing/UnrealBloomPass.js');
-      bloomModule = { type: 'webgl', EffectComposer, RenderPass, UnrealBloomPass };
-    }
+    // WebGL bloom via preloaded UMD scripts
+    const bloomModule = {
+      type: 'webgl',
+      EffectComposer: THREE.EffectComposer,
+      RenderPass: THREE.RenderPass,
+      UnrealBloomPass: THREE.UnrealBloomPass,
+    };
 
     // ═══════════════════════════════════════════════
     // Parallel Execution Utilities
@@ -2062,15 +2060,24 @@
 
         setBootStage('LOADING GRAPH...', `${mapped.nodes.length} NODES`);
 
-        await initGraph(mapped.nodes, mapped.edges);
-        buildLegend(mapped.clusterNames);
-        buildClusterLabels(mapped.clusterNames);
-        buildReadouts(mapped.nodes.length, mapped.edges.length);
+        try {
+          await initGraph(mapped.nodes, mapped.edges);
+          buildLegend(mapped.clusterNames);
+          buildClusterLabels(mapped.clusterNames);
+          // Force DOM update for readouts
+          await new Promise(r => setTimeout(r, 0));
+          buildReadouts(mapped.nodes.length, mapped.edges.length);
 
-        setBootStage(`GRAPH ONLINE // ${mapped.nodes.length} NODES // ${mapped.edges.length} EDGES`, '');
-        setTimeout(hideBootStatus, 2000);
+          setBootStage(`GRAPH ONLINE // ${mapped.nodes.length} NODES // ${mapped.edges.length} EDGES`, '');
+          setTimeout(hideBootStatus, 2000);
+        } catch (initErr) {
+          console.error('[initGraph failed]', initErr);
+          setBootStage('GRAPH INIT FAILED', initErr.message);
+          throw initErr;
+        }
       } catch (err) {
         console.error('[loadExternalGraph] Error:', err);
+        setBootStage('FAILED TO LOAD GRAPH', err.message);
         setupStatus.textContent = 'ERROR: ' + err.message.toUpperCase();
       }
     }
@@ -3869,10 +3876,13 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
 
     function buildNodeTooltip(node) {
       if (isExternalGraph) {
-        return `<div style="text-align:center;font-family:monospace;">`
-          + `<div style="font-weight:600;">${escapeHtml(node.name)}</div>`
-          + `<div style="color:#888888;font-size:11px;">${escapeHtml(node._tag || '')} / ${escapeHtml(node.cluster_name || '')}</div>`
+        const typeLabel = node.cluster_name || node._tag || 'Unknown';
+        const codeLabel = node.name || '';
+        const html = `<div style="text-align:center;font-family:monospace;background:#222;color:#fff;padding:8px;border-radius:4px;">`
+          + `<div style="font-weight:bold;font-size:13px;margin-bottom:6px;color:#ffaa00;">${escapeHtml(typeLabel)}</div>`
+          + `<div style="color:#aaaaaa;font-size:9px;border-top:1px solid #444;padding-top:4px;">${escapeHtml(codeLabel)}</div>`
           + '</div>';
+        return html;
       }
       const markers = [];
       if (node.is_medoid) markers.push('<span style="color:#222222;font-size:10px;">MEDOID</span>');
@@ -3915,7 +3925,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
           hoverBox.style.left = (screenPos.x + 20) + 'px';
           hoverBox.style.top = (screenPos.y - 20) + 'px';
         }
-        hoverBox.classList.add('visible');
+        // hoverBox.classList.add('visible');  // Disabled: using custom tooltip instead
       } else {
         hoverBox.classList.remove('visible');
       }
@@ -5027,8 +5037,37 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       let _labelFrame = 0;
       (function renderLabels() {
         if (Graph) {
+          const nodes = Graph.graphData().nodes;
+          const cam = Graph.camera();
+          const camPos = cam.position;
+
+          // Performance culling: hide distant nodes to improve FPS
+          if (++_labelFrame % CULLING_UPDATE_INTERVAL === 0) {
+            culledNodeCount = 0;
+            nodes.forEach(n => {
+              if (!n.__sphereMesh) return;
+              // Calculate distance from camera
+              const dx = (n.x || 0) - camPos.x;
+              const dy = (n.y || 0) - camPos.y;
+              const dz = (n.z || 0) - camPos.z;
+              const distToNode = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+              // Cull nodes beyond distance threshold
+              const shouldCull = distToNode > cullingDistance;
+              if (shouldCull) {
+                n.__sphereMesh.visible = false;
+                n.__ringMesh.visible = false;
+                culledNodeCount++;
+              } else {
+                n.__sphereMesh.visible = true;
+                // Ring visibility based on selection state
+                if (n.__ringMesh) n.__ringMesh.visible = n.__isSelected || false;
+              }
+            });
+          }
+
+          // Original label logic for non-external graphs
           if (!_labelsHiddenByDefault && ++_labelFrame % 3 === 0) {
-            const nodes = Graph.graphData().nodes;
             const graphEl = document.getElementById('graph');
             const w = graphEl.clientWidth, h = graphEl.clientHeight;
             const tooMany = nodes.length > 500;
@@ -5188,7 +5227,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         let userBloomStrength = VFX.bloomStrength?.val ?? 0.5;
 
         const fpsBadge = document.getElementById('fps-badge');
-        Graph.onRenderFramePost(() => {
+        // onRenderFramePost is missing from the 3d-force-graph 1.73.0 UMD
+        // bundle; fall back to a rAF loop (same cadence as the renderer)
+        const onFramePost = typeof Graph.onRenderFramePost === 'function'
+          ? (cb) => Graph.onRenderFramePost(cb)
+          : (cb) => { const loop = () => { cb(); requestAnimationFrame(loop); }; requestAnimationFrame(loop); };
+        onFramePost(() => {
           const now = performance.now();
           const delta = now - lastFrameTime;
           lastFrameTime = now;
@@ -5445,8 +5489,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     }
 
     function buildReadouts(nodeCount, edgeCount) {
-      document.getElementById('readout-nodes').textContent = nodeCount.toLocaleString();
-      document.getElementById('readout-edges').textContent = edgeCount.toLocaleString();
+      console.log('[buildReadouts]', {nodeCount, edgeCount});
+      const nodesEl = document.getElementById('readout-nodes');
+      const edgesEl = document.getElementById('readout-edges');
+      if (!nodesEl) console.error('readout-nodes element not found!');
+      if (!edgesEl) console.error('readout-edges element not found!');
+      if (nodesEl) nodesEl.textContent = nodeCount.toLocaleString();
+      if (edgesEl) edgesEl.textContent = edgeCount.toLocaleString();
     }
 
     // ═══════════════════════════════════════════════
@@ -5881,6 +5930,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let ht_prevY    = null;
     let ht_twoHandPrevDist = null;
     let ht_hoverNode = null;
+
+    // Performance culling
+    let cullingDistance = 3000;        // distance beyond which to cull nodes
+    let culledNodeCount = 0;           // track how many nodes are culled
+    const CULLING_UPDATE_INTERVAL = 30; // update culling every N frames
     let ht_pointFrames = 0;
     let ht_fistFrames  = 0;
     let ht_noHandFrames = 0;
@@ -6603,8 +6657,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         width: CAM_W,
         height: CAM_H
       });
-      cam.start();
-      ht_setLabel('LOADING MODELS...');
+      try {
+        cam.start();
+        console.log('[ht_init] Camera started successfully');
+        ht_setLabel('LOADING MODELS...');
+      } catch (err) {
+        console.error('[ht_init] Camera start failed:', err);
+        ht_setLabel('CAMERA ERROR: ' + err.message);
+      }
     }
 
     // Start hand tracking when the setup screen is hidden (graph is ready)
@@ -6641,6 +6701,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     qualityLabel.className = 'quality-reduced-label';
     qualityLabel.textContent = '⚡ quality reduced';
     document.body.appendChild(qualityLabel);
+
+    })(); }); // end main() + DOMContentLoaded
 
   </script>
 

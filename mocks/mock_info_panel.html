@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Info Panel — Mock Proposal</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #fafafa;
+      --bg-panel: rgba(255, 255, 255, 0.92);
+      --border: #e8e8e8;
+      --border-subtle: #f0f0f0;
+      --text: #2a2a2a;
+      --text-dim: #999999;
+      --text-mid: #666666;
+      --text-bright: #111111;
+      --mono: 'JetBrains Mono', monospace;
+      --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #333;
+      font-family: var(--sans);
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 40px 20px;
+      gap: 60px;
+      min-height: 100vh;
+    }
+
+    h2.label {
+      font-family: var(--mono); font-size: 11px; font-weight: 500;
+      letter-spacing: 0.15em; text-transform: uppercase;
+      color: #888; margin-bottom: 16px; text-align: center;
+    }
+
+    /* ═══════════════════════════════════════
+       CURRENT — Recreation
+       ═══════════════════════════════════════ */
+    .current-panel {
+      background: var(--bg-panel);
+      backdrop-filter: blur(10px);
+      border: 1px solid var(--border);
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      min-width: 180px;
+    }
+    .current-section { padding: 7px 12px; }
+    .current-section + .current-section { border-top: 1px solid var(--border); }
+    .current-row {
+      display: flex; justify-content: space-between; gap: 16px;
+      margin-bottom: 2px; line-height: 1.5;
+    }
+    .current-key { color: var(--text-dim); }
+    .current-val { color: var(--text-bright); text-align: right; }
+    .current-legend-item {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 3px; line-height: 1.5;
+    }
+    .current-dot { width: 8px; height: 8px; flex-shrink: 0; }
+    .current-legend-label { font-size: 11px; color: var(--text-bright); white-space: nowrap; }
+    .current-legend-special {
+      border-top: 1px solid var(--border); margin-top: 5px; padding-top: 5px;
+    }
+
+    /* ═══════════════════════════════════════
+       PROPOSAL — New Info Panel
+       ═══════════════════════════════════════ */
+    .new-panel {
+      background: var(--bg-panel);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-family: var(--mono);
+      min-width: 220px;
+      max-width: 240px;
+      overflow: hidden;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.03);
+    }
+
+    /* Stats bar — compact horizontal row */
+    .np-stats {
+      display: flex;
+      padding: 10px 14px;
+      gap: 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .np-stat {
+      flex: 1;
+      text-align: center;
+    }
+    .np-stat + .np-stat {
+      border-left: 1px solid var(--border);
+    }
+    .np-stat-val {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-bright);
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+    }
+    .np-stat-key {
+      font-size: 8px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-top: 2px;
+    }
+
+    /* Legend section */
+    .np-legend {
+      padding: 10px 14px;
+    }
+
+    .np-legend-title {
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .np-legend-count {
+      font-weight: 400;
+      font-size: 9px;
+      color: var(--text-dim);
+      opacity: 0.6;
+    }
+
+    .np-legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 3px 0;
+      cursor: default;
+      transition: opacity 150ms;
+      position: relative;
+    }
+    .np-legend-item:hover {
+      opacity: 0.7;
+    }
+    .np-legend-item.hidden-tag {
+      opacity: 0.3;
+    }
+    .np-legend-item.hidden-tag .np-dot {
+      background: var(--text-dim) !important;
+      opacity: 0.3;
+    }
+    .np-legend-item.hidden-tag .np-legend-label {
+      text-decoration: line-through;
+      color: var(--text-dim);
+    }
+
+    .np-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      transition: transform 150ms, opacity 150ms;
+    }
+    .np-legend-item:hover .np-dot {
+      transform: scale(1.4);
+    }
+
+    .np-legend-label {
+      font-size: 10px;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex: 1;
+      letter-spacing: 0.02em;
+    }
+
+    .np-legend-nodecount {
+      font-size: 9px;
+      color: var(--text-dim);
+      opacity: 0.5;
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+
+    /* Edge types — compact */
+    .np-edges {
+      padding: 8px 14px;
+      border-top: 1px solid var(--border);
+    }
+    .np-edges-title {
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+    }
+    .np-edge-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 2px 0;
+      font-size: 10px;
+    }
+    .np-edge-name {
+      color: var(--text-mid);
+      letter-spacing: 0.02em;
+    }
+    .np-edge-count {
+      color: var(--text-dim);
+      font-size: 9px;
+      opacity: 0.6;
+    }
+    /* Mini bar chart */
+    .np-edge-bar-bg {
+      flex: 1;
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      margin: 0 8px;
+      overflow: hidden;
+    }
+    .np-edge-bar {
+      height: 100%;
+      background: var(--text-dim);
+      border-radius: 2px;
+      transition: width 300ms ease;
+    }
+
+    /* Key hint */
+    .np-hint {
+      padding: 8px 14px;
+      border-top: 1px solid var(--border);
+      text-align: center;
+    }
+    .np-hint span {
+      font-size: 8px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      opacity: 0.5;
+    }
+
+    /* ═══════════════════════════════════════
+       Collapse toggle
+       ═══════════════════════════════════════ */
+    .np-toggle {
+      width: 100%;
+      background: none;
+      border: none;
+      border-top: 1px solid var(--border);
+      padding: 6px 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      font-family: var(--mono);
+      font-size: 8px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      transition: background 100ms;
+    }
+    .np-toggle:hover {
+      background: rgba(0,0,0,0.02);
+    }
+    .np-toggle-chevron {
+      font-size: 8px;
+      transition: transform 200ms;
+    }
+    .np-toggle.collapsed .np-toggle-chevron {
+      transform: rotate(180deg);
+    }
+
+    .np-collapsible {
+      overflow: hidden;
+      transition: max-height 250ms ease, opacity 200ms ease;
+      max-height: 600px;
+      opacity: 1;
+    }
+    .np-collapsible.collapsed {
+      max-height: 0;
+      opacity: 0;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ══════════════════════════════════════════
+       CURRENT
+       ══════════════════════════════════════════ -->
+  <div>
+    <h2 class="label">Current</h2>
+    <div class="current-panel">
+      <div class="current-section">
+        <div class="current-row"><span class="current-key">NODES</span><span class="current-val">3,500</span></div>
+        <div class="current-row"><span class="current-key">EDGES</span><span class="current-val">8,241</span></div>
+        <div class="current-row"><span class="current-key">K-NN</span><span class="current-val">5</span></div>
+      </div>
+      <div class="current-section">
+        <div class="current-legend-item"><div class="current-dot" style="background:#e74c3c"></div><span class="current-legend-label">Comercio</span></div>
+        <div class="current-legend-item"><div class="current-dot" style="background:#3498db"></div><span class="current-legend-label">CommerceDeNue</span></div>
+        <div class="current-legend-item"><div class="current-dot" style="background:#2ecc71"></div><span class="current-legend-label">Commerce</span></div>
+        <div class="current-legend-item"><div class="current-dot" style="background:#f39c12"></div><span class="current-legend-label">Demografico</span></div>
+        <div class="current-legend-item"><div class="current-dot" style="background:#9b59b6"></div><span class="current-legend-label">Person</span></div>
+        <div class="current-legend-item"><div class="current-dot" style="background:#1abc9c"></div><span class="current-legend-label">Personality</span></div>
+        <div class="current-legend-item"><div class="current-dot" style="background:#e67e22"></div><span class="current-legend-label">SocioeconomicLevel</span></div>
+        <div class="current-legend-item"><div class="current-dot" style="background:#34495e"></div><span class="current-legend-label">Occupation</span></div>
+        <div class="current-legend-item"><div class="current-dot" style="background:#e91e63"></div><span class="current-legend-label">Geografico</span></div>
+        <div class="current-legend-item"><div class="current-dot" style="background:#00bcd4"></div><span class="current-legend-label">PostalCode</span></div>
+        <div class="current-legend-item"><div class="current-dot" style="background:#8bc34a"></div><span class="current-legend-label">Tesla</span></div>
+        <div class="current-legend-item"><div class="current-dot" style="background:#ff5722"></div><span class="current-legend-label">ReligionClassification</span></div>
+        <div class="current-legend-special">
+          <div style="margin-bottom:4px;font-size:10px;opacity:0.5;letter-spacing:0.08em">EDGE TYPES</div>
+          <div class="current-legend-item"><span class="current-legend-label" style="font-size:10px">LOCATED_IN</span><span style="margin-left:auto;opacity:0.4;font-size:10px">4,200</span></div>
+          <div class="current-legend-item"><span class="current-legend-label" style="font-size:10px">HAS_PROFILE</span><span style="margin-left:auto;opacity:0.4;font-size:10px">2,100</span></div>
+          <div class="current-legend-item"><span class="current-legend-label" style="font-size:10px">BELONGS_TO</span><span style="margin-left:auto;opacity:0.4;font-size:10px">1,500</span></div>
+          <div class="current-legend-item"><span class="current-legend-label" style="font-size:10px">WORKS_AT</span><span style="margin-left:auto;opacity:0.4;font-size:10px">441</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+       PROPOSAL
+       ══════════════════════════════════════════ -->
+  <div>
+    <h2 class="label">Proposal</h2>
+    <div class="new-panel">
+
+      <!-- Stats: compact horizontal -->
+      <div class="np-stats">
+        <div class="np-stat">
+          <div class="np-stat-val">3,500</div>
+          <div class="np-stat-key">Nodos</div>
+        </div>
+        <div class="np-stat">
+          <div class="np-stat-val">8,241</div>
+          <div class="np-stat-key">Aristas</div>
+        </div>
+        <div class="np-stat">
+          <div class="np-stat-val">12</div>
+          <div class="np-stat-key">Tags</div>
+        </div>
+      </div>
+
+      <!-- Collapsible body -->
+      <div class="np-collapsible" id="np-body">
+
+        <!-- Legend: tags with dot, name, node count -->
+        <div class="np-legend">
+          <div class="np-legend-title">
+            <span>Leyenda — Tags</span>
+            <span class="np-legend-count">12</span>
+          </div>
+          <div class="np-legend-item" onclick="this.classList.toggle('hidden-tag')"><div class="np-dot" style="background:#e74c3c"></div><span class="np-legend-label">Comercio</span><span class="np-legend-nodecount">820</span></div>
+          <div class="np-legend-item" onclick="this.classList.toggle('hidden-tag')"><div class="np-dot" style="background:#3498db"></div><span class="np-legend-label">CommerceDeNue</span><span class="np-legend-nodecount">540</span></div>
+          <div class="np-legend-item" onclick="this.classList.toggle('hidden-tag')"><div class="np-dot" style="background:#2ecc71"></div><span class="np-legend-label">Commerce</span><span class="np-legend-nodecount">480</span></div>
+          <div class="np-legend-item hidden-tag" onclick="this.classList.toggle('hidden-tag')"><div class="np-dot" style="background:#f39c12"></div><span class="np-legend-label">Demografico</span><span class="np-legend-nodecount">320</span></div>
+          <div class="np-legend-item" onclick="this.classList.toggle('hidden-tag')"><div class="np-dot" style="background:#9b59b6"></div><span class="np-legend-label">Person</span><span class="np-legend-nodecount">290</span></div>
+          <div class="np-legend-item" onclick="this.classList.toggle('hidden-tag')"><div class="np-dot" style="background:#1abc9c"></div><span class="np-legend-label">Personality</span><span class="np-legend-nodecount">210</span></div>
+          <div class="np-legend-item hidden-tag" onclick="this.classList.toggle('hidden-tag')"><div class="np-dot" style="background:#e67e22"></div><span class="np-legend-label">SocioeconomicLevel</span><span class="np-legend-nodecount">180</span></div>
+          <div class="np-legend-item" onclick="this.classList.toggle('hidden-tag')"><div class="np-dot" style="background:#34495e"></div><span class="np-legend-label">Occupation</span><span class="np-legend-nodecount">160</span></div>
+          <div class="np-legend-item" onclick="this.classList.toggle('hidden-tag')"><div class="np-dot" style="background:#e91e63"></div><span class="np-legend-label">Geografico</span><span class="np-legend-nodecount">150</span></div>
+          <div class="np-legend-item" onclick="this.classList.toggle('hidden-tag')"><div class="np-dot" style="background:#00bcd4"></div><span class="np-legend-label">PostalCode</span><span class="np-legend-nodecount">140</span></div>
+          <div class="np-legend-item" onclick="this.classList.toggle('hidden-tag')"><div class="np-dot" style="background:#8bc34a"></div><span class="np-legend-label">Tesla</span><span class="np-legend-nodecount">120</span></div>
+          <div class="np-legend-item" onclick="this.classList.toggle('hidden-tag')"><div class="np-dot" style="background:#ff5722"></div><span class="np-legend-label">ReligionClassification</span><span class="np-legend-nodecount">90</span></div>
+        </div>
+
+        <!-- Edge types with mini bar chart -->
+        <div class="np-edges">
+          <div class="np-edges-title">Tipos de arista</div>
+          <div class="np-edge-row">
+            <span class="np-edge-name">located_in</span>
+            <div class="np-edge-bar-bg"><div class="np-edge-bar" style="width:100%"></div></div>
+            <span class="np-edge-count">4,200</span>
+          </div>
+          <div class="np-edge-row">
+            <span class="np-edge-name">has_profile</span>
+            <div class="np-edge-bar-bg"><div class="np-edge-bar" style="width:50%"></div></div>
+            <span class="np-edge-count">2,100</span>
+          </div>
+          <div class="np-edge-row">
+            <span class="np-edge-name">belongs_to</span>
+            <div class="np-edge-bar-bg"><div class="np-edge-bar" style="width:36%"></div></div>
+            <span class="np-edge-count">1,500</span>
+          </div>
+          <div class="np-edge-row">
+            <span class="np-edge-name">works_at</span>
+            <div class="np-edge-bar-bg"><div class="np-edge-bar" style="width:10%"></div></div>
+            <span class="np-edge-count">441</span>
+          </div>
+        </div>
+
+        <!-- Keyboard hint -->
+        <div class="np-hint">
+          <span>H recentrar &middot; ESC cerrar panel</span>
+        </div>
+      </div>
+
+      <!-- Collapse toggle -->
+      <button class="np-toggle" id="np-toggle" onclick="document.getElementById('np-body').classList.toggle('collapsed');this.classList.toggle('collapsed')">
+        <span>Leyenda</span>
+        <span class="np-toggle-chevron">&#x25B4;</span>
+      </button>
+
+    </div>
+  </div>
+
+</body>
+</html>
