@@ -29,7 +29,20 @@ If the app runs on a remote server (e.g. a GPU machine) and you want to use your
 ### Prerequisites on the server
 
 - **Python 3** (pre-installed on most Linux)
-- No other dependencies — everything loads from CDN
+- No other dependencies — all libraries (MediaPipe, Three.js, 3d-force-graph, fonts) are
+  vendored under `vendor/` and load locally. Graph viewing + hand tracking work fully offline.
+  (Notes mode still needs internet: Gemini API for embeddings and `esm.sh` for the UMAP worker.)
+
+### Large graphs
+
+The browser renderer handles roughly <20k edges. For bigger knowledge graphs, prune first:
+
+```bash
+python3 graph_prune.py INPUT.kgraph.json OUTPUT.kgraph.json --min-shared 3
+```
+
+`--min-shared N` keeps course nodes shared by ≥N dropout students (lower N = bigger graph).
+Add `--include-continua` to also keep continuing students for contrast.
 
 ### Step 1: Start the server on the remote machine
 
