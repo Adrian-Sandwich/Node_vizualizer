@@ -58,54 +58,58 @@ class KGraphBuilder:
 # JSON Extraction Helpers
 # ============================================================================
 
+def _match_balanced(text: str, i: int) -> int:
+    """Given text[i] is an opening '{' or '[', return the index just past its
+    matching close bracket (exclusive end), or len(text) if unterminated.
+
+    Tracks string literals (and backslash escapes) so brackets inside strings
+    are not counted.
+    """
+    depth = 0
+    in_str = False
+    escape = False
+    j = i
+    while j < len(text):
+        c = text[j]
+        if in_str:
+            if escape:
+                escape = False
+            elif c == '\\':
+                escape = True
+            elif c == '"':
+                in_str = False
+        elif c == '"':
+            in_str = True
+        elif c in '{[':
+            depth += 1
+        elif c in '}]':
+            depth -= 1
+            if depth == 0:
+                return j + 1
+        j += 1
+    return len(text)
+
+
 def _extract_json_value(text: str, start: int) -> str:
     """Extract a balanced JSON value (array or object) starting at position start.
 
-    Uses bracket/brace depth tracking to find the end of the JSON value.
-    Handles string escaping to avoid counting brackets inside strings.
+    Skips leading whitespace, then delegates container matching to
+    _match_balanced; primitives are read up to the next ';' or ','.
     """
     i = start
-    # Skip leading whitespace
     while i < len(text) and text[i] in ' \t\n\r':
         i += 1
     if i >= len(text):
         return ''
 
-    opener = text[i]
-    closer = {'{': '}', '[': ']'}.get(opener)
+    if text[i] in '{[':
+        return text[i:_match_balanced(text, i)]
 
-    if closer is None:
-        # Primitive (string, number, boolean, null) — read to semicolon or comma
-        end = text.find(';', i)
-        if end == -1:
-            end = text.find(',', i)
-        return text[i:end] if end > i else text[i:]
-
-    # Track bracket/brace depth
-    depth = 1
-    in_str = False
-    escape = False
-    j = i + 1
-
-    while j < len(text):
-        c = text[j]
-
-        if escape:
-            escape = False
-        elif c == '\\' and in_str:
-            escape = True
-        elif c == '"' and not escape:
-            in_str = not in_str
-        elif not in_str:
-            if c in '{[':
-                depth += 1
-            elif c in '}]':
-                depth -= 1
-                if depth == 0:
-                    return text[i:j+1]
-        j += 1
-
-    return text[i:]
+    # Primitive (string, number, boolean, null) — read to semicolon or comma
+    end = text.find(';', i)
+    if end == -1:
+        end = text.find(',', i)
+    return text[i:end] if end > i else text[i:]
 
 
 def _extract_js_var(html_text: str, varname: str) -> Any:

@@ -5,24 +5,23 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#ffffff">
   <title>Graph Visualizer</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/pose.js" crossorigin="anonymous"></script>
+  <link href="vendor/fonts/jetbrains-mono.css" rel="stylesheet">
+  <!-- Vendored locally for full offline use — see vendor/ (run nothing, files are committed) -->
+  <script src="vendor/mediapipe/hands/hands.js"></script>
+  <script src="vendor/mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="vendor/mediapipe/drawing_utils/drawing_utils.js"></script>
+  <script src="vendor/mediapipe/pose/pose.js"></script>
   <!-- UMD builds — work on file:// without ES module restrictions -->
-  <script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
-  <script src="https://unpkg.com/three@0.128.0/examples/js/renderers/CSS2DRenderer.js"></script>
-  <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
-  <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
-  <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
-  <script src="https://unpkg.com/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
-  <script src="https://unpkg.com/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
-  <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
-  <script src="https://unpkg.com/3d-force-graph@1.73.0/dist/3d-force-graph.min.js"></script>
-  <script src="https://unpkg.com/umap-js@1.4.0/lib/umap-js.js"></script>
+  <script src="vendor/three/build/three.min.js"></script>
+  <script src="vendor/three/examples/js/renderers/CSS2DRenderer.js"></script>
+  <script src="vendor/three/examples/js/postprocessing/EffectComposer.js"></script>
+  <script src="vendor/three/examples/js/postprocessing/RenderPass.js"></script>
+  <script src="vendor/three/examples/js/postprocessing/UnrealBloomPass.js"></script>
+  <script src="vendor/three/examples/js/shaders/LuminosityHighPassShader.js"></script>
+  <script src="vendor/three/examples/js/shaders/CopyShader.js"></script>
+  <script src="vendor/three/examples/js/postprocessing/ShaderPass.js"></script>
+  <script src="vendor/3d-force-graph/dist/3d-force-graph.min.js"></script>
+  <script src="vendor/umap-js/lib/umap-js.js"></script>
   <style>
     /* ═══════════════════════════════════════════════
        CSS Custom Properties
@@ -1339,6 +1338,11 @@
 
     document.addEventListener('DOMContentLoaded', () => { (async function main() {
 
+    // Debug logging gate: silent by default; enable with ?debug=1 in the URL.
+    // console.error/warn are kept unconditionally for real problems.
+    const DEBUG = new URLSearchParams(location.search).has('debug');
+    const log = DEBUG ? console.log.bind(console) : () => {};
+
     // ═══════════════════════════════════════════════
     // WebGPU Detection — WebGPU not available in UMD, skip
     // ═══════════════════════════════════════════════
@@ -1618,10 +1622,10 @@
       }
       if (!dataScript) throw new Error('No graph data found in file');
 
-      console.log('[parseExternalGraph] Detected format:', format);
+      log('[parseExternalGraph] Detected format:', format);
       if (format === 'matria') {
         const result = parseMatriaFormat(dataScript);
-        console.log('[parseExternalGraph] Matria result:', result.nodesArr?.length, 'nodes');
+        log('[parseExternalGraph] Matria result:', result.nodesArr?.length, 'nodes');
         return result;
       }
       if (format === 'kg') return parseKnowledgeGraphFormat(dataScript);
@@ -1638,7 +1642,7 @@
           console.warn('[parseMatriaFormat] Variable not found:', varName);
           return varName === 'nodesArr' ? [] : (varName.endsWith('Arr') ? [] : {});
         }
-        console.log('[parseMatriaFormat] Found', varName, 'at position', match.index);
+        log('[parseMatriaFormat] Found', varName, 'at position', match.index);
 
         let start = match.index + match[0].length;
         while (start < script.length && /\s/.test(script[start])) start++;
@@ -1986,7 +1990,7 @@
       try {
         setupStatus.textContent = 'READING GRAPH FILE...';
         const text = await file.text();
-        console.log('[loadExternalGraph] File read, size:', text.length);
+        log('[loadExternalGraph] File read, size:', text.length);
 
         setupStatus.textContent = 'PARSING GRAPH DATA...';
         let parsed;
@@ -1998,18 +2002,18 @@
               throw new Error('JSON file must have format="kgraph"');
             }
             parsed = parseKGraphFormat(obj);
-            console.log('[loadExternalGraph] Parsed .kgraph.json:', parsed.nodesArr.length, 'nodes');
+            log('[loadExternalGraph] Parsed .kgraph.json:', parsed.nodesArr.length, 'nodes');
           } catch (err) {
             throw new Error('Invalid .kgraph.json file: ' + err.message);
           }
         } else {
           // HTML format (matria or visjs)
           parsed = parseExternalGraph(text);
-          console.log('[loadExternalGraph] Parsed HTML graph:', parsed.nodesArr.length, 'nodes');
+          log('[loadExternalGraph] Parsed HTML graph:', parsed.nodesArr.length, 'nodes');
         }
 
         const mapped = mapExternalToInternal(parsed);
-        console.log('[loadExternalGraph] Mapped to internal:', mapped.nodes.length, 'nodes,', mapped.edges.length, 'edges');
+        log('[loadExternalGraph] Mapped to internal:', mapped.nodes.length, 'nodes,', mapped.edges.length, 'edges');
         setupStatus.textContent = `FOUND ${mapped.nodes.length} NODES, ${mapped.edges.length} EDGES`;
 
         isExternalGraph = true;
@@ -2408,7 +2412,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       });
 
       [embBuffer, normBuffer, distBuffer, readBuffer, paramsBuffer].forEach(b => b.destroy());
-      console.log(`GPU cosine distance: ${n}×${n} matrix computed`);
+      log(`GPU cosine distance: ${n}×${n} matrix computed`);
       return matrix;
     }
 
@@ -2470,7 +2474,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         }
       }
 
-      console.log(`Worker cosine distance: ${n}×${n} matrix, ${promises.length} workers`);
+      log(`Worker cosine distance: ${n}×${n} matrix, ${promises.length} workers`);
       return matrix;
     }
 
@@ -2621,7 +2625,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       }
 
       [embBuffer, centroidBuffer, labelBuffer, readBuffer, paramsBuffer].forEach(b => b.destroy());
-      console.log(`GPU kmeans: ${n} points, k=${k}`);
+      log(`GPU kmeans: ${n} points, k=${k}`);
       return { labels: Array.from(labels), centroids };
     }
 
@@ -3525,7 +3529,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         const embeddings = await embedTexts(texts, apiKey, (done, total) => {
           setBootStage('EMBEDDING...', `${done}/${total}`);
         });
-        console.log(`Stage 2 (embedding): ${((performance.now() - t0) / 1000).toFixed(1)}s`);
+        log(`Stage 2 (embedding): ${((performance.now() - t0) / 1000).toFixed(1)}s`);
 
         // ── STAGE 3: COMPUTING TOPOLOGY ──
         const t3 = performance.now();
@@ -3551,7 +3555,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         // Phase C: knn needs distMatrix
         setBootStage('COMPUTING TOPOLOGY...', 'K-NN EDGES');
         const edges = knnEdges(distMatrix, K_NEIGHBORS);
-        console.log(`Stage 3 (topology): ${((performance.now() - t3) / 1000).toFixed(1)}s`);
+        log(`Stage 3 (topology): ${((performance.now() - t3) / 1000).toFixed(1)}s`);
 
         // ── Compute topology-specific edge sets ──
 
@@ -3683,7 +3687,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
           if (executing.size >= LABEL_CONCURRENCY) await Promise.race(executing);
         }
         await Promise.all(executing);
-        console.log(`Stage 4 (annotating): ${((performance.now() - t4) / 1000).toFixed(1)}s`);
+        log(`Stage 4 (annotating): ${((performance.now() - t4) / 1000).toFixed(1)}s`);
 
         // Store edge sets for readout counts; combine all for the graph
         edgeSets = { central: centralEdges, decentral: decentralEdges, distrib: labeledEdges };
@@ -3728,14 +3732,14 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
             nodeCount: notes.length,
             fingerprint: fingerprint || '',
           });
-          console.log('Cache saved:', serializableNodes.length, 'nodes');
+          log('Cache saved:', serializableNodes.length, 'nodes');
         } catch (cacheErr) {
           console.error('Cache save failed:', cacheErr);
           setBootStage(`SCOPE ONLINE // ${notes.length} NODES // CACHE SAVE FAILED`, cacheErr.message);
         }
 
         const totalTime = ((performance.now() - t0) / 1000).toFixed(1);
-        console.log(`Pipeline total: ${totalTime}s`);
+        log(`Pipeline total: ${totalTime}s`);
         setBootStage(`SCOPE ONLINE // ${notes.length} NODES // ${labeledEdges.length} EDGES // ${totalTime}s`, '');
         // Show export button for notes mode
         document.getElementById('export-kgraph-btn').classList.remove('hidden');
@@ -3755,6 +3759,13 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
     // miniGraph removed — using 2D canvas instead to avoid WebGL context leak
     let bloomPass;
     let gpuSim = null;
+    // initGraph teardown bookkeeping — handles/refs cancelled & freed on re-init
+    // so repeated LOAD EXTERNAL GRAPH doesn't stack render loops, DOM overlays,
+    // listeners or orphaned WebGL contexts.
+    let _labelRAF = null;
+    let _css2dEl = null;
+    let _resizeHandler = null;
+    let _initInFlight = false;
     let currentLayout = 'central';
     let hoverNode = null;
     let selectedNode = null;
@@ -3824,6 +3835,18 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       const div = document.createElement('div');
       div.textContent = str;
       return div.innerHTML;
+    }
+
+    // escapeHtml (textContent→innerHTML) does NOT escape quotes, so it is unsafe
+    // for values interpolated inside an HTML attribute ("..."). Use this instead
+    // for attribute context — escapes &, <, >, " and '.
+    function escapeAttr(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
     }
 
     function getNodeColor(node) {
@@ -4222,7 +4245,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
           const tColor = CLUSTER_COLORS[t.cluster_id % CLUSTER_COLORS.length];
           const tLabel = e.label || 'UNKNOWN';
           edgeTypeCounts[tLabel] = (edgeTypeCounts[tLabel] || 0) + 1;
-          connHtml += `<li class="dc-conn-item" data-node-id="${t.id}"><span class="dc-conn-dot" style="background:${tColor}"></span><div class="dc-conn-info"><div class="dc-conn-name">${escapeHtml(t._tag || '')} :: ${escapeHtml(t.name || '')}</div><div class="dc-conn-edge">${escapeHtml(tLabel)}</div></div><span class="dc-conn-arrow">&#x203A;</span></li>`;
+          connHtml += `<li class="dc-conn-item" data-node-id="${escapeAttr(t.id)}"><span class="dc-conn-dot" style="background:${tColor}"></span><div class="dc-conn-info"><div class="dc-conn-name">${escapeHtml(t._tag || '')} :: ${escapeHtml(t.name || '')}</div><div class="dc-conn-edge">${escapeHtml(tLabel)}</div></div><span class="dc-conn-arrow">&#x203A;</span></li>`;
         });
         connHtml += '</ul>';
 
@@ -4272,7 +4295,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
           const target = nodeById[e.id];
           if (!target) return;
           const tColor = CLUSTER_COLORS[target.cluster_id % CLUSTER_COLORS.length];
-          connHtml += `<li class="dc-conn-item" data-node-id="${target.id}"><span class="dc-conn-dot" style="background:${tColor}"></span><div class="dc-conn-info"><div class="dc-conn-name">${escapeHtml(target.name)}</div><div class="dc-conn-edge">${escapeHtml(e.label)}</div></div><span class="dc-conn-arrow">&#x203A;</span></li>`;
+          connHtml += `<li class="dc-conn-item" data-node-id="${escapeAttr(target.id)}"><span class="dc-conn-dot" style="background:${tColor}"></span><div class="dc-conn-info"><div class="dc-conn-name">${escapeHtml(target.name)}</div><div class="dc-conn-edge">${escapeHtml(e.label)}</div></div><span class="dc-conn-arrow">&#x203A;</span></li>`;
         });
         connHtml += '</ul>';
         document.getElementById('dc-connections').innerHTML =
@@ -4955,8 +4978,21 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // ── initGraph ──
 
     async function initGraph(nodes, edges) {
-      // Dispose previous GPU simulation if any
+      // Guard against re-entrancy (initGraph is async; a double-click on
+      // LOAD EXTERNAL GRAPH could overlap two builds).
+      if (_initInFlight) return;
+      _initInFlight = true;
+      try {
+      // ── Teardown of the PREVIOUS graph (idempotent re-init) ──────────────
+      // Without this, every reload stacks another renderLabels rAF loop, a new
+      // CSS2D overlay in the DOM, a new window.resize listener, and orphans the
+      // old ForceGraph3D (WebGL context) — the progressive slowdown on reload.
       if (gpuSim) { gpuSim.dispose(); gpuSim = null; }
+      if (_labelRAF) { cancelAnimationFrame(_labelRAF); _labelRAF = null; }
+      if (clusterLabelRAF) { cancelAnimationFrame(clusterLabelRAF); clusterLabelRAF = null; }
+      if (Graph && Graph._destructor) { try { Graph._destructor(); } catch (e) { console.warn('Graph teardown:', e); } }
+      if (_css2dEl) { _css2dEl.remove(); _css2dEl = null; }
+      if (_resizeHandler) { window.removeEventListener('resize', _resizeHandler); _resizeHandler = null; }
 
       const links = edges.map(e => ({
         source: e.source,
@@ -5029,6 +5065,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       css2d.domElement.style.left = '0';
       css2d.domElement.style.pointerEvents = 'none';
       graphEl.appendChild(css2d.domElement);
+      _css2dEl = css2d.domElement;   // tracked so re-init removes the old overlay
 
       // Render CSS2D labels with culling for medium graphs
       // Large external graphs (>1000 nodes) have labels hidden by default;
@@ -5036,6 +5073,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const _labelsHiddenByDefault = isExternalGraph;
       let _labelFrame = 0;
       (function renderLabels() {
+        _labelRAF = null;
         if (Graph) {
           const nodes = Graph.graphData().nodes;
           const cam = Graph.camera();
@@ -5082,18 +5120,20 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           }
           css2d.render(Graph.scene(), Graph.camera());
         }
-        requestAnimationFrame(renderLabels);
+        _labelRAF = requestAnimationFrame(renderLabels);
       })();
 
-      // Resize graph + CSS2D overlay when window changes
-      window.addEventListener('resize', () => {
+      // Resize graph + CSS2D overlay when window changes. Named + tracked so
+      // re-init removes the previous listener instead of stacking.
+      _resizeHandler = () => {
         const h = window.innerHeight;
         const panelOpen = document.getElementById('detail-card').classList.contains('visible');
         const pw = panelOpen ? parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--panel-width') || '380') + 5 : 0;
         const w = window.innerWidth - pw;
         Graph.width(w).height(h);
         css2d.setSize(w, h);
-      });
+      };
+      window.addEventListener('resize', _resizeHandler);
 
       // Post-processing bloom (dual-path: WebGPU TSL or WebGL legacy)
       if (gpuAvailable) {
@@ -5284,6 +5324,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
             }
           }
         });
+      }
+      } finally {
+        _initInFlight = false;
       }
     }
 
@@ -5489,7 +5532,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     }
 
     function buildReadouts(nodeCount, edgeCount) {
-      console.log('[buildReadouts]', {nodeCount, edgeCount});
+      log('[buildReadouts]', {nodeCount, edgeCount});
       const nodesEl = document.getElementById('readout-nodes');
       const edgesEl = document.getElementById('readout-edges');
       if (!nodesEl) console.error('readout-nodes element not found!');
@@ -6512,11 +6555,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       // ── MediaPipe Hands (receives crops or full frame) ────────────────────
       const mpHands = new Hands({
         locateFile: file =>
-          `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`
+          `vendor/mediapipe/hands/${file}`
       });
       mpHands.setOptions({
         maxNumHands: 2,
-        modelComplexity: 1,
+        modelComplexity: 1,   // full model — best landmark accuracy
         minDetectionConfidence: 0.8,
         minTrackingConfidence: 0.6
       });
@@ -6541,7 +6584,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       // ── MediaPipe Pose (coarse detector — lite model) ─────────────────────
       const mpPose = new Pose({
         locateFile: file =>
-          `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/${file}`
+          `vendor/mediapipe/pose/${file}`
       });
       mpPose.setOptions({
         modelComplexity: 0,
@@ -6651,15 +6694,38 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         await mpHands.send({ image: video });
       });
 
-      // ── Camera loop — always sends to Pose first ─────────────────────────
+      // ── Camera loop ──────────────────────────────────────────────────────
+      // USE_POSE_CROP=false: skip the Pose stage entirely and run Hands on the
+      // full frame. Pose only existed to crop the wrist region for far-away
+      // hands; for a desk webcam it is unneeded. Dropping it means the Pose
+      // model/wasm never loads (faster startup) and only one net runs per frame.
+      // Set true to restore the Pose→crop→Hands pipeline for distant hands.
+      const USE_POSE_CROP = true;
+      // Throttle inference: run the net only every Nth camera frame so the
+      // graph render keeps the GPU/CPU most frames. SKIP=1 → full rate.
+      const MP_FRAME_SKIP = 1;
+      let _mpFrame = 0;
+      let _mpBusy = false;
       const cam = new Camera(video, {
-        onFrame: async () => { await mpPose.send({ image: video }); },
+        onFrame: async () => {
+          if (++_mpFrame % MP_FRAME_SKIP !== 0) return;
+          if (_mpBusy) return;            // drop frame if previous inference still running
+          _mpBusy = true;
+          try {
+            if (USE_POSE_CROP) {
+              await mpPose.send({ image: video });
+            } else {
+              activeCrops = null;          // full-frame: landmarks need no remap
+              await mpHands.send({ image: video });
+            }
+          } finally { _mpBusy = false; }
+        },
         width: CAM_W,
         height: CAM_H
       });
       try {
         cam.start();
-        console.log('[ht_init] Camera started successfully');
+        log('[ht_init] Camera started successfully');
         ht_setLabel('LOADING MODELS...');
       } catch (err) {
         console.error('[ht_init] Camera start failed:', err);
