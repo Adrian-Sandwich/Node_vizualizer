@@ -7,7 +7,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from graph_layout import fibonacci_sphere, layout_sphere, normalize
+from graph_layout import fibonacci_sphere, layout_radial, layout_sphere, normalize
 
 
 def nodes_for(domains):
@@ -45,6 +45,35 @@ class TestLayoutSphere(unittest.TestCase):
         nodes = nodes_for(["a", "b", "a", "c", "b"])
         self.assertEqual(layout_sphere(nodes, [], 1400.0),
                          layout_sphere(nodes_for(["a", "b", "a", "c", "b"]), [], 1400.0))
+
+
+class TestLayoutRadial(unittest.TestCase):
+    def _star(self):
+        """hub H connected to 20 leaves."""
+        nodes = [{"id": "H", "domain": "a"}] + \
+                [{"id": f"L{i}", "domain": "b"} for i in range(20)]
+        edges = [{"from": "H", "to": f"L{i}"} for i in range(20)]
+        return nodes, edges
+
+    def test_hub_closer_to_center_than_leaves(self):
+        nodes, edges = self._star()
+        coords = layout_radial(nodes, edges, 1400.0)
+        r = [math.sqrt(x * x + y * y + z * z) for x, y, z in coords]
+        hub_r, leaf_rs = r[0], r[1:]
+        self.assertTrue(all(hub_r < lr for lr in leaf_rs))
+
+    def test_all_nodes_get_coords(self):
+        nodes, edges = self._star()
+        coords = layout_radial(nodes, edges, 1400.0)
+        self.assertEqual(len(coords), len(nodes))
+        self.assertTrue(all(all(math.isfinite(c) for c in p) for p in coords))
+
+    def test_deterministic(self):
+        nodes, edges = self._star()
+        a = layout_radial(nodes, edges, 1400.0)
+        n2, e2 = self._star()
+        b = layout_radial(n2, e2, 1400.0)
+        self.assertEqual(a, b)
 
 
 class TestNormalize(unittest.TestCase):

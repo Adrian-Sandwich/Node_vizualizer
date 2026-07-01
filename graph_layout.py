@@ -9,6 +9,10 @@ Algorithms:
                    for 36k nodes / 365k edges.
   fr     igraph 3D Fruchterman-Reingold (grid-accelerated); slower (~5-15 min)
          but often crisper cluster separation.
+  radial degree-based galaxy, no dependencies: hubs at the core, leaves on
+         outer orbits, domains in angular sectors, disc-flattened. Best for
+         hub-heavy bipartite data (students→courses) where force layouts
+         produce hairballs.
   sphere no-dependency fallback: domain-grouped fibonacci-sphere shells.
          Deterministic, O(n), used automatically (with a warning) when
          python-igraph is not installed. app.html has a JS twin of this
@@ -68,6 +72,69 @@ def layout_sphere(nodes, edges, radius):
     return coords
 
 
+def layout_radial(nodes, edges, radius):
+    """Degree-based galaxy: hubs at the core, leaves on outer orbits.
+
+    - Radius per node: log-scaled inverse degree (max degree → center).
+    - Direction: each domain starts in its own angular sector (fibonacci
+      spread), then 3 refinement sweeps pull every node toward the mean
+      direction of its neighbors — connected structure becomes visible
+      instead of angular noise.
+    - Y is flattened to 0.45 for a galactic-disc silhouette.
+    Deterministic, dependency-free, O(iters·E).
+    """
+    n = len(nodes)
+    idx = {node["id"]: i for i, node in enumerate(nodes)}
+
+    deg = [0] * n
+    pairs = []
+    for e in edges:
+        a, b = idx.get(e["from"]), idx.get(e["to"])
+        if a is None or b is None:
+            continue
+        deg[a] += 1
+        deg[b] += 1
+        pairs.append((a, b))
+
+    max_deg = max(deg) or 1
+    r_min, r_max = radius * 0.06, radius
+    radii = [r_min + (1.0 - math.log1p(d) / math.log1p(max_deg)) * (r_max - r_min)
+             for d in deg]
+
+    # initial directions: domain sectors, fibonacci spread inside each sector
+    groups = defaultdict(list)
+    for i, node in enumerate(nodes):
+        groups[node.get("domain") or "default"].append(i)
+    keys = sorted(groups)
+    sector_centers = fibonacci_sphere(len(keys), 1.0) if len(keys) > 1 else [(0.0, 1.0, 0.0)]
+    dirs = [None] * n
+    for gi, key in enumerate(keys):
+        cx, cy, cz = sector_centers[gi]
+        members = groups[key]
+        for j, (px, py, pz) in zip(members, fibonacci_sphere(len(members), 1.0)):
+            # blend: 70% sector center + 30% spread → tight but non-degenerate
+            vx, vy, vz = cx + 0.45 * px, cy + 0.45 * py, cz + 0.45 * pz
+            norm = math.sqrt(vx * vx + vy * vy + vz * vz) or 1.0
+            dirs[j] = [vx / norm, vy / norm, vz / norm]
+
+    # refinement: pull each node's direction toward its neighbors' mean
+    for _ in range(3):
+        acc = [[d[0] * 0.5, d[1] * 0.5, d[2] * 0.5] for d in dirs]  # self-weight
+        for a, b in pairs:
+            da, db = dirs[a], dirs[b]
+            acc[a][0] += db[0]; acc[a][1] += db[1]; acc[a][2] += db[2]
+            acc[b][0] += da[0]; acc[b][1] += da[1]; acc[b][2] += da[2]
+        for i in range(n):
+            x, y, z = acc[i]
+            norm = math.sqrt(x * x + y * y + z * z)
+            if norm > 1e-9:
+                dirs[i] = [x / norm, y / norm, z / norm]
+
+    return [(dirs[i][0] * radii[i],
+             dirs[i][1] * radii[i] * 0.45,   # flatten → disc
+             dirs[i][2] * radii[i]) for i in range(n)]
+
+
 def layout_igraph(nodes, edges, algo, seed):
     import igraph  # noqa: deferred so --algo sphere works without it
 
@@ -107,7 +174,7 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="default: overwrite input")
-    ap.add_argument("--algo", choices=["drl", "fr", "sphere"], default="drl")
+    ap.add_argument("--algo", choices=["drl", "fr", "radial", "sphere"], default="drl")
     ap.add_argument("--radius", type=float, default=1400.0,
                     help="95th-percentile radius of the final layout (default 1400 ≈ app SCALE*5)")
     ap.add_argument("--seed", type=int, default=42)
@@ -117,19 +184,21 @@ def main():
     nodes, edges = g["nodes"], g["edges"]
     algo = args.algo
 
-    if algo != "sphere":
+    if algo in ("drl", "fr"):
         try:
             import igraph  # noqa
         except ImportError:
-            print("WARNING: python-igraph not installed — falling back to --algo sphere.\n"
+            print("WARNING: python-igraph not installed — falling back to --algo radial.\n"
                   "  install: python3 -m venv .venv && .venv/bin/pip install python-igraph",
                   file=sys.stderr)
-            algo = "sphere"
+            algo = "radial"
 
     print(f"[graph_layout] {len(nodes)} nodes / {len(edges)} edges, algo={algo}",
           file=sys.stderr)
     if algo == "sphere":
         coords = layout_sphere(nodes, edges, args.radius)
+    elif algo == "radial":
+        coords = layout_radial(nodes, edges, args.radius)
     else:
         coords = layout_igraph(nodes, edges, algo, args.seed)
 

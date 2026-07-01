@@ -3468,7 +3468,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       if (!Graph) return;
       if (perfMode && perf) {
         // the LINK ALPHA slider drives the single LineSegments material
-        perf.lineMat.opacity = VFX.linkAlpha.val;
+        perf.lineMat.opacity = VFX.linkAlpha.val * PERF_EDGE_ALPHA_SCALE;
         return;
       }
       Graph
@@ -5032,6 +5032,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let perf = null; // { mesh, lines, geos/mats, positions, baseColors, scales, edgeSrc, edgeDst, nodes, idToIndex, handlers, hoverIdx }
     const PERF_NODE_THRESHOLD = 8000;
     const PERF_EDGE_THRESHOLD = 60000;
+    // Edge alpha in perf mode = slider value × this. At 100k+ overlapping
+    // segments full slider alpha buries the nodes in spaghetti.
+    const PERF_EDGE_ALPHA_SCALE = 0.35;
     // ?perf=1 forces perf mode on small graphs (pick-precision testing);
     // ?perf=0 forces the normal path.
     const PERF_OVERRIDE = new URLSearchParams(location.search).get('perf');
@@ -5112,7 +5115,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         idToIndex.set(node.id, i);
         const x = node.x || 0, y = node.y || 0, z = node.z || 0;
         positions[i * 3] = x; positions[i * 3 + 1] = y; positions[i * 3 + 2] = z;
-        const s = node.is_medoid ? 4 : 2;
+        const s = node.is_medoid ? 5 : 3;
         scales[i] = s;
         m4.makeScale(s, s, s).setPosition(x, y, z);
         mesh.setMatrixAt(i, m4);
@@ -5151,7 +5154,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const lineMat = new THREE.LineBasicMaterial({
         vertexColors: true,
         transparent: true,
-        opacity: VFX.linkAlpha.val,
+        opacity: VFX.linkAlpha.val * PERF_EDGE_ALPHA_SCALE,
         depthWrite: false, // 365k translucent segments — avoid z-fighting churn
       });
       const lines = new THREE.LineSegments(lineGeo, lineMat);
@@ -5270,7 +5273,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         const hidden = hiddenTags.has(String(node.cluster_id));
         nodeVisible[i] = hidden ? 0 : 1;
         // scale: 0 hides; restore base otherwise (keeps hover scale coherent)
-        const baseS = node.is_medoid ? 4 : 2;
+        const baseS = node.is_medoid ? 5 : 3;
         perf.scales[i] = hidden ? 0 : baseS;
         perfSetInstanceScale(i, i === selIdx ? baseS * 2 : perf.scales[i]);
 
