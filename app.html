@@ -6014,9 +6014,17 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     const HT_INERTIA_MIN = 0.0005;
     let ht_inertiaRAF = null;
 
-    // Fix 2 — Hysteresis for finger extension detection
-    const ht_extendedState = [false, false, false, false];
-    const HT_EXTEND_MARGIN = 0.025;
+    // Fix 2 — Hysteresis for finger extension detection.
+    // Extension is measured rotation-invariantly: ratio of 3D distances
+    // dist(tip, wrist) / dist(pip, wrist). Extended finger ≈ 1.3–1.6,
+    // curled ≈ 0.7–1.0 — independent of hand orientation (the old y-only
+    // comparison broke with a sideways/rotated hand).
+    // Slots: 0=index 1=middle 2=ring 3=pinky 4=thumb.
+    const ht_extendedState = [false, false, false, false, false];
+    const HT_EXT_RATIO_ENTER = 1.28;  // ratio above → extended
+    const HT_EXT_RATIO_EXIT  = 1.12;  // ratio below → curled (hysteresis band)
+    const HT_THUMB_ENTER = 1.35;      // dist(thumbTip, pinkyMCP)/handSize above → out
+    const HT_THUMB_EXIT  = 1.15;
 
     // Fix 3 — Gesture lock + debounce
     let ht_lastGesture = 'other';
@@ -6024,7 +6032,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let ht_pendFrames  = 0;
     let ht_lockFrames  = 0;
     const HT_GESTURE_DEBOUNCE = 2;
-    const HT_GESTURE_LOCK = 8;
+    const HT_GESTURE_LOCK = 5; // was 8 (~267ms deaf after transition); the rotation-invariant classifier is stable enough for a shorter lock
     // Onboarding parallel debounce state
     let ob_lastGesture = 'other';
     let ob_pendGesture = 'other';
@@ -6035,8 +6043,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let ht_wasTwoHands = false;
     let ob_wasTwoHands = false;
 
-    // Fix 5 — EMA smoothing of landmarks
-    const HT_EMA_ALPHA = 0.45;
+    // Fix 5 → One Euro filter smoothing of landmarks (replaces fixed-alpha EMA).
+    // Adaptive: heavy smoothing when the hand is still (kills jitter), light
+    // smoothing when it moves fast (kills lag). Standard interactive-tracking
+    // filter. Tunables:
+    const HT_OE_MIN_CUTOFF = 1.2;  // Hz — lower = smoother at rest
+    const HT_OE_BETA       = 0.02; // speed coefficient — higher = snappier when moving
+    const HT_OE_D_CUTOFF   = 1.0;  // Hz — derivative lowpass
     let ht_emaState = { lm: null };
     let ob_emaState = { lm: null };
 
@@ -6106,14 +6119,35 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       }
     }
 
+    function ht_dist3(a, b) {
+      const dx = a.x - b.x, dy = a.y - b.y, dz = (a.z || 0) - (b.z || 0);
+      return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
     function ht_isExtended(lm, tip, pip, fingerIdx) {
-      const diff = lm[pip].y - lm[tip].y;
+      // Rotation-invariant: tip farther from wrist than PIP ⇒ finger straight.
+      const wrist = lm[0];
+      const ratio = ht_dist3(lm[tip], wrist) / (ht_dist3(lm[pip], wrist) || 1e-6);
       if (ht_extendedState[fingerIdx]) {
-        if (diff < -HT_EXTEND_MARGIN) ht_extendedState[fingerIdx] = false;
+        if (ratio < HT_EXT_RATIO_EXIT) ht_extendedState[fingerIdx] = false;
       } else {
-        if (diff > HT_EXTEND_MARGIN) ht_extendedState[fingerIdx] = true;
+        if (ratio > HT_EXT_RATIO_ENTER) ht_extendedState[fingerIdx] = true;
       }
       return ht_extendedState[fingerIdx];
+    }
+
+    function ht_thumbExtended(lm) {
+      // Thumb doesn't fold toward the wrist, so the tip/pip ratio is useless.
+      // Instead: distance thumb-tip(4) ↔ pinky-MCP(17), normalized by hand size
+      // (wrist(0) ↔ middle-MCP(9)). Tucked thumb crosses the palm → small.
+      const handSize = ht_dist3(lm[0], lm[9]) || 1e-6;
+      const ratio = ht_dist3(lm[4], lm[17]) / handSize;
+      if (ht_extendedState[4]) {
+        if (ratio < HT_THUMB_EXIT) ht_extendedState[4] = false;
+      } else {
+        if (ratio > HT_THUMB_ENTER) ht_extendedState[4] = true;
+      }
+      return ht_extendedState[4];
     }
 
     function ht_gesture(lm) {
@@ -6121,8 +6155,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const mid  = ht_isExtended(lm, 12, 10, 1);
       const ring = ht_isExtended(lm, 16, 14, 2);
       const pink = ht_isExtended(lm, 20, 18, 3);
+      const thumb = ht_thumbExtended(lm);
       const n    = [idx, mid, ring, pink].filter(Boolean).length;
-      if (n === 0)                        return 'fist';
+      // fist requires the thumb tucked too — a thumbs-up no longer pauses.
+      if (n === 0 && !thumb)              return 'fist';
       if (idx && !mid && !ring && !pink)  return 'point';
       if (idx && mid && !ring && !pink)   return 'peace';
       if (n >= 3)                         return 'palm';
@@ -6168,16 +6204,41 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       return ob_lastGesture;
     }
 
-    // Fix 5 — EMA smoothing of landmarks
+    // One Euro filter over all 21 landmarks × 3 coords. State lives in `state`
+    // (typed arrays); resetting is `state.lm = null` — same contract as the old
+    // EMA, so all existing reset points keep working.
     function ht_smoothLandmarks(rawLm, state) {
+      const now = performance.now() / 1000;
       if (!state.lm) {
         state.lm = rawLm.map(p => ({ x: p.x, y: p.y, z: p.z }));
+        state.xHat = new Float32Array(63);
+        state.dxHat = new Float32Array(63);
+        for (let i = 0; i < 21; i++) {
+          state.xHat[i * 3]     = rawLm[i].x;
+          state.xHat[i * 3 + 1] = rawLm[i].y;
+          state.xHat[i * 3 + 2] = rawLm[i].z;
+        }
+        state.t = now;
         return state.lm;
       }
+      const dt = Math.min(Math.max(now - state.t, 1 / 120), 1 / 5); // clamp 5–120fps
+      state.t = now;
+      const TAU = 2 * Math.PI;
+      const aD = 1 / (1 + 1 / (TAU * HT_OE_D_CUTOFF * dt)); // derivative lowpass alpha
       for (let i = 0; i < 21; i++) {
-        state.lm[i].x = HT_EMA_ALPHA * rawLm[i].x + (1 - HT_EMA_ALPHA) * state.lm[i].x;
-        state.lm[i].y = HT_EMA_ALPHA * rawLm[i].y + (1 - HT_EMA_ALPHA) * state.lm[i].y;
-        state.lm[i].z = HT_EMA_ALPHA * rawLm[i].z + (1 - HT_EMA_ALPHA) * state.lm[i].z;
+        const p = rawLm[i];
+        const raw = [p.x, p.y, p.z];
+        for (let c = 0; c < 3; c++) {
+          const k = i * 3 + c;
+          const dx = (raw[c] - state.xHat[k]) / dt;
+          state.dxHat[k] = aD * dx + (1 - aD) * state.dxHat[k];
+          const cutoff = HT_OE_MIN_CUTOFF + HT_OE_BETA * Math.abs(state.dxHat[k]);
+          const a = 1 / (1 + 1 / (TAU * cutoff * dt));
+          state.xHat[k] = a * raw[c] + (1 - a) * state.xHat[k];
+        }
+        state.lm[i].x = state.xHat[i * 3];
+        state.lm[i].y = state.xHat[i * 3 + 1];
+        state.lm[i].z = state.xHat[i * 3 + 2];
       }
       return state.lm;
     }
@@ -6541,7 +6602,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     function ht_init() {
       const video = document.getElementById('ht-video');
-      const CAM_W = 320, CAM_H = 180;
+      // 640×360 (was 320×180): 4× pixels → the palm detector can find hands at
+      // desk distance and landmark quantization noise halves. MediaPipe
+      // downscales internally, so per-frame cost grows only slightly.
+      const CAM_W = 640, CAM_H = 360;
       const CROP_SZ = 256;
 
       // ── Offscreen canvas for wrist crops ─────────────────────────────────
@@ -6560,7 +6624,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       mpHands.setOptions({
         maxNumHands: 2,
         modelComplexity: 1,   // full model — best landmark accuracy
-        minDetectionConfidence: 0.8,
+        minDetectionConfidence: 0.65, // was 0.8 — faster re-acquisition after losing track; the runtime HT_MIN_CONFIDENCE=0.75 filter still guards accepted hands
         minTrackingConfidence: 0.6
       });
 
@@ -6571,6 +6635,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         // If we used crops, remap landmarks back to full-frame coordinates
         if (activeCrops && results.multiHandLandmarks) {
           results.multiHandLandmarks.forEach((lm, hi) => {
+            // NOTE: activeCrops is always a single merged region covering all
+            // visible wrists, and Hands runs ON that crop canvas — so any hand
+            // it detects is inside the crop and this remap is always valid,
+            // even for 2 hands with 1 crop entry.
             const crop = activeCrops[Math.min(hi, activeCrops.length - 1)];
             lm.forEach(p => {
               p.x = crop.x / CAM_W + p.x * (crop.w / CAM_W);
