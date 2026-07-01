@@ -35,7 +35,23 @@ If the app runs on a remote server (e.g. a GPU machine) and you want to use your
 
 ### Large graphs
 
-The browser renderer handles roughly <20k edges. For bigger knowledge graphs, prune first:
+Two paths depending on size:
+
+**Full graphs (tested up to 36k nodes / 365k edges) — perf mode.** Bake a 3D
+layout offline, then load the result; the app auto-switches to instanced
+rendering (1 draw call for all nodes + 1 for all edges, no live physics):
+
+```bash
+# one-time: python3 -m venv .venv && .venv/bin/pip install python-igraph
+.venv/bin/python graph_layout.py INPUT.kgraph.json -o OUTPUT.kgraph.json
+```
+
+Perf mode activates automatically above 8k nodes / 60k edges (`?perf=1|0`
+overrides). Graphs without baked coords get a deterministic sphere fallback.
+Smaller graphs that carry baked coords load instantly (positions pinned,
+physics skipped).
+
+**Focused subgraphs — prune.** For interactive physics on a slice:
 
 ```bash
 python3 graph_prune.py INPUT.kgraph.json OUTPUT.kgraph.json --min-shared 3
@@ -43,6 +59,10 @@ python3 graph_prune.py INPUT.kgraph.json OUTPUT.kgraph.json --min-shared 3
 
 `--min-shared N` keeps course nodes shared by ≥N dropout students (lower N = bigger graph).
 Add `--include-continua` to also keep continuing students for contrast.
+
+**URL params:** `?graph=<url>` auto-loads a graph over HTTP (direct links,
+testing); `?ob=0` skips the gesture onboarding; `?debug=1` enables console
+logging; `?perf=1|0` forces perf mode on/off.
 
 ### Step 1: Start the server on the remote machine
 

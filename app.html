@@ -1921,6 +1921,8 @@
         _vid:      n.vid     || n.id,
         _tooltip:  n.tooltip || '',
         size:      n.size    || 10,
+        // baked layout coords from graph_layout.py (may be undefined)
+        _x: n.x, _y: n.y, _z: n.z,
         ...n.props,
       }));
 
@@ -1970,6 +1972,8 @@
         filename: '',
         is_medoid: 0,
         is_llm_center: 0,
+        // baked layout coords — 3d-force-graph treats x/y/z as initial positions
+        ...(Number.isFinite(n._x) ? { x: n._x, y: n._y, z: n._z } : {}),
       }));
 
       const edges = edgesArr.map(e => ({
@@ -2033,8 +2037,10 @@
             vid: n._vid,
             size: n.size || 10,
             tooltip: n._tooltip || '',
+            // round-trip baked layout coords so EXPORT keeps the layout
+            ...(Number.isFinite(n._x) ? { x: n._x, y: n._y, z: n._z } : {}),
             props: Object.fromEntries(Object.entries(n).filter(([k]) =>
-              !['id','label','_tag','_domain','_vid','_tooltip','size'].includes(k)))
+              !['id','label','_tag','_domain','_vid','_tooltip','size','_x','_y','_z'].includes(k)))
           })),
           edges: parsed.edgesArr.map(e => ({
             from: e.from,
@@ -2110,6 +2116,24 @@
       });
     } else {
       console.error('[INIT] graph-file-input not found in DOM');
+    }
+
+    // ?graph=<url> — auto-load a graph over HTTP, skipping the file picker.
+    // Handy for direct links (`app.html?graph=graphs/foo.kgraph.json`) and for
+    // automated testing. loadExternalGraph only needs an object with .text().
+    const _autoGraphUrl = new URLSearchParams(location.search).get('graph');
+    if (_autoGraphUrl) {
+      (async () => {
+        try {
+          const resp = await fetch(_autoGraphUrl);
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          const text = await resp.text();
+          await loadExternalGraph({ text: async () => text });
+        } catch (err) {
+          console.error('[autoload]', err);
+          setupStatus.textContent = 'AUTOLOAD ERROR: ' + err.message.toUpperCase();
+        }
+      })();
     }
 
     // Load from cache (fallback button — no folder match needed)
@@ -3427,6 +3451,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
     let nodeRefreshTimer = null;
 
     function scheduleNodeRefresh() {
+      if (perfMode) return; // instanced scene doesn't use per-node objects
       clearTimeout(nodeRefreshTimer);
       nodeRefreshTimer = setTimeout(() => {
         if (!Graph) return;
@@ -3441,6 +3466,11 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
 
     function refreshLinks() {
       if (!Graph) return;
+      if (perfMode && perf) {
+        // the LINK ALPHA slider drives the single LineSegments material
+        perf.lineMat.opacity = VFX.linkAlpha.val;
+        return;
+      }
       Graph
         .linkColor(link => getLinkColor(link))
         .linkWidth(link => getLinkWidth(link))
@@ -3948,10 +3978,14 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
           hoverBox.style.left = (screenPos.x + 20) + 'px';
           hoverBox.style.top = (screenPos.y - 20) + 'px';
         }
-        // hoverBox.classList.add('visible');  // Disabled: using custom tooltip instead
+        // Perf mode has no built-in nodeLabel tooltip (graphData is empty), so
+        // the hover box IS the tooltip there. Normal path keeps it hidden.
+        if (perfMode) hoverBox.classList.add('visible');
       } else {
         hoverBox.classList.remove('visible');
       }
+
+      if (perfMode) return; // instance scale-up handled by initPerfPicking; no global dim at 365k edges
 
       if (Graph) {
         const { neighbors1, neighbors2 } = node
@@ -3992,16 +4026,20 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       dcNavStack.length = 0;
       showDetailCard(node);
 
-      // Selected node highlighted, neighbors slightly visible, rest normal
-      const { neighbors1 } = getNeighborDepths(node);
-      Graph.graphData().nodes.forEach(n => {
-        if (n === node)                  updateNodeAppearance(n, 'selected');
-        else if (neighbors1.has(n.id))   updateNodeAppearance(n, 'sel-neighbor');
-        else                             updateNodeAppearance(n, 'sel-rest');
-      });
+      if (perfMode) {
+        perfApplyHighlight();
+      } else {
+        // Selected node highlighted, neighbors slightly visible, rest normal
+        const { neighbors1 } = getNeighborDepths(node);
+        Graph.graphData().nodes.forEach(n => {
+          if (n === node)                  updateNodeAppearance(n, 'selected');
+          else if (neighbors1.has(n.id))   updateNodeAppearance(n, 'sel-neighbor');
+          else                             updateNodeAppearance(n, 'sel-rest');
+        });
 
-      Graph.linkColor(Graph.linkColor())
-           .linkWidth(Graph.linkWidth());
+        Graph.linkColor(Graph.linkColor())
+             .linkWidth(Graph.linkWidth());
+      }
 
       // Focus camera: approach from current direction, stop 700 units from node
       const distance = 700;
@@ -4975,6 +5013,311 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       }
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // PERF MODE — instanced rendering for huge graphs (36k nodes / 365k edges)
+    //
+    // Above the thresholds, the normal 3d-force-graph pipeline dies: one
+    // THREE.Line per edge (365k draw calls) + 5 objects per node + live d3
+    // physics. Perf mode instead: layout precomputed offline (graph_layout.py
+    // bakes x,y,z), 3d-force-graph gets EMPTY graphData and serves only as
+    // stage (scene, camera, controls, bloom), and we render everything as:
+    //   · 1 THREE.InstancedMesh   — all node spheres (per-instance color/scale)
+    //   · 1 THREE.LineSegments    — all edges in one buffer (vertex colors)
+    // Picking is a linear scan over a Float32Array of positions (~36k
+    // multiply-adds, <1ms) — NOT raycaster.intersectObject(InstancedMesh),
+    // which in three r128 does a Matrix4 inversion + triangle test per
+    // instance and would freeze per mousemove.
+    // ═══════════════════════════════════════════════════════════════════════
+    let perfMode = false;
+    let perf = null; // { mesh, lines, geos/mats, positions, baseColors, scales, edgeSrc, edgeDst, nodes, idToIndex, handlers, hoverIdx }
+    const PERF_NODE_THRESHOLD = 8000;
+    const PERF_EDGE_THRESHOLD = 60000;
+    // ?perf=1 forces perf mode on small graphs (pick-precision testing);
+    // ?perf=0 forces the normal path.
+    const PERF_OVERRIDE = new URLSearchParams(location.search).get('perf');
+
+    function hasBakedLayout(nodes) {
+      if (!nodes.length) return false;
+      let ok = 0;
+      for (const n of nodes) {
+        if (Number.isFinite(n.x) && Number.isFinite(n.y) && Number.isFinite(n.z)) ok++;
+      }
+      return ok >= nodes.length * 0.95;
+    }
+
+    // JS twin of graph_layout.py --algo sphere (keep in sync): domain-grouped
+    // fibonacci-sphere shells. Used when a huge graph arrives WITHOUT baked
+    // coords — we never run d3 physics at this scale.
+    function computeFallbackLayout(nodes, radius = 1400) {
+      const fib = (count, r, out) => {
+        const golden = Math.PI * (3 - Math.sqrt(5));
+        for (let i = 0; i < count; i++) {
+          const y = 1 - (2 * i + 1) / count;
+          const rr = Math.sqrt(Math.max(0, 1 - y * y));
+          const th = golden * i;
+          out.push([Math.cos(th) * rr * r, y * r, Math.sin(th) * rr * r]);
+        }
+        return out;
+      };
+      const groups = new Map();
+      nodes.forEach((n, i) => {
+        const k = n._domain || 'default';
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(i);
+      });
+      const keys = [...groups.keys()].sort();
+      const centers = keys.length > 1 ? fib(keys.length, radius * 0.55, []) : [[0, 0, 0]];
+      keys.forEach((k, gi) => {
+        const members = groups.get(k);
+        const [cx, cy, cz] = centers[gi];
+        const subR = radius * 0.45 * Math.cbrt(members.length / Math.max(nodes.length, 1)) + radius * 0.08;
+        const pts = fib(members.length, subR, []);
+        members.forEach((mi, j) => {
+          nodes[mi].x = cx + pts[j][0];
+          nodes[mi].y = cy + pts[j][1];
+          nodes[mi].z = cz + pts[j][2];
+        });
+      });
+    }
+
+    function perfBoundingRadius() {
+      if (!perf) return SCALE * 4;
+      let max2 = 0;
+      const p = perf.positions;
+      for (let i = 0; i < p.length; i += 3) {
+        const d2 = p[i] * p[i] + p[i + 1] * p[i + 1] + p[i + 2] * p[i + 2];
+        if (d2 > max2) max2 = d2;
+      }
+      return Math.sqrt(max2) || SCALE * 4;
+    }
+
+    function buildPerfScene(nodes, edges) {
+      const n = nodes.length;
+      const sphereGeo = new THREE.SphereGeometry(1, 8, 6);
+      const nodeMat = new THREE.MeshBasicMaterial();
+      const mesh = new THREE.InstancedMesh(sphereGeo, nodeMat, n);
+      // r128 doesn't grow bounds per instance — without this the whole mesh
+      // vanishes once the unit sphere leaves the frustum.
+      mesh.frustumCulled = false;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+
+      const m4 = new THREE.Matrix4();
+      const col = new THREE.Color();
+      const positions = new Float32Array(n * 3);
+      const baseColors = new Float32Array(n * 3);
+      const scales = new Float32Array(n);
+      const idToIndex = new Map();
+
+      nodes.forEach((node, i) => {
+        idToIndex.set(node.id, i);
+        const x = node.x || 0, y = node.y || 0, z = node.z || 0;
+        positions[i * 3] = x; positions[i * 3 + 1] = y; positions[i * 3 + 2] = z;
+        const s = node.is_medoid ? 4 : 2;
+        scales[i] = s;
+        m4.makeScale(s, s, s).setPosition(x, y, z);
+        mesh.setMatrixAt(i, m4);
+        col.set(CLUSTER_COLORS[node.cluster_id % CLUSTER_COLORS.length] || '#888888');
+        mesh.setColorAt(i, col);
+        baseColors[i * 3] = col.r; baseColors[i * 3 + 1] = col.g; baseColors[i * 3 + 2] = col.b;
+      });
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+
+      const e = edges.length;
+      const linePos = new Float32Array(e * 6);
+      const lineCol = new Uint8Array(e * 6);
+      const edgeSrc = new Int32Array(e);
+      const edgeDst = new Int32Array(e);
+      for (let i = 0; i < e; i++) {
+        const si = idToIndex.get(edges[i].source);
+        const ti = idToIndex.get(edges[i].target);
+        edgeSrc[i] = si ?? -1; edgeDst[i] = ti ?? -1;
+        if (si == null || ti == null) continue; // both verts stay at origin, zero-length
+        linePos[i * 6]     = positions[si * 3];
+        linePos[i * 6 + 1] = positions[si * 3 + 1];
+        linePos[i * 6 + 2] = positions[si * 3 + 2];
+        linePos[i * 6 + 3] = positions[ti * 3];
+        linePos[i * 6 + 4] = positions[ti * 3 + 1];
+        linePos[i * 6 + 5] = positions[ti * 3 + 2];
+        for (let v = 0; v < 2; v++) {
+          const ni = v === 0 ? si : ti;
+          lineCol[i * 6 + v * 3]     = baseColors[ni * 3] * 255;
+          lineCol[i * 6 + v * 3 + 1] = baseColors[ni * 3 + 1] * 255;
+          lineCol[i * 6 + v * 3 + 2] = baseColors[ni * 3 + 2] * 255;
+        }
+      }
+      const lineGeo = new THREE.BufferGeometry();
+      lineGeo.setAttribute('position', new THREE.BufferAttribute(linePos, 3));
+      lineGeo.setAttribute('color', new THREE.BufferAttribute(lineCol, 3, true));
+      const lineMat = new THREE.LineBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: VFX.linkAlpha.val,
+        depthWrite: false, // 365k translucent segments — avoid z-fighting churn
+      });
+      const lines = new THREE.LineSegments(lineGeo, lineMat);
+      lines.frustumCulled = false;
+
+      Graph.scene().add(mesh);
+      Graph.scene().add(lines);
+      perf = { mesh, lines, sphereGeo, nodeMat, lineGeo, lineMat,
+               positions, baseColors, scales, linePos, lineCol,
+               edgeSrc, edgeDst, nodes, idToIndex, handlers: {}, hoverIdx: -1 };
+    }
+
+    function disposePerfScene() {
+      if (!perf) { perfMode = false; return; }
+      try {
+        const scene = Graph && Graph.scene && Graph.scene();
+        if (scene) { scene.remove(perf.mesh); scene.remove(perf.lines); }
+      } catch (e) { /* Graph already destroyed */ }
+      perf.sphereGeo.dispose(); perf.nodeMat.dispose();
+      perf.lineGeo.dispose(); perf.lineMat.dispose();
+      // handlers live on the #graph div, which SURVIVES Graph._destructor() —
+      // they must be removed here or they stack across reloads.
+      const el = document.getElementById('graph');
+      if (el) for (const [ev, fn] of Object.entries(perf.handlers)) el.removeEventListener(ev, fn);
+      perf = null; perfMode = false;
+    }
+
+    const _perfRaycaster = new THREE.Raycaster();
+    const _perfNdc = new THREE.Vector2();
+    function perfPickNode(clientX, clientY) {
+      if (!perf || !Graph) return null;
+      const el = document.getElementById('graph');
+      const rect = el.getBoundingClientRect();
+      _perfNdc.set(((clientX - rect.left) / rect.width) * 2 - 1,
+                   -((clientY - rect.top) / rect.height) * 2 + 1);
+      const cam = Graph.camera();
+      _perfRaycaster.setFromCamera(_perfNdc, cam);
+      const ro = _perfRaycaster.ray.origin, rd = _perfRaycaster.ray.direction;
+      // world-units per screen-pixel at distance t: 2·t·tan(fov/2)/heightPx
+      const pxWorld = 2 * Math.tan((cam.fov * Math.PI / 180) / 2) / rect.height;
+      const TOL_PX = 8;
+      const p = perf.positions;
+      let best = -1, bestT = Infinity;
+      for (let i = 0; i < perf.nodes.length; i++) {
+        if (perf.scales[i] === 0) continue; // hidden by tag filter
+        const dx = p[i * 3] - ro.x, dy = p[i * 3 + 1] - ro.y, dz = p[i * 3 + 2] - ro.z;
+        const t = dx * rd.x + dy * rd.y + dz * rd.z;   // distance along ray
+        if (t < 0 || t >= bestT) continue;
+        const px = dx - t * rd.x, py = dy - t * rd.y, pz = dz - t * rd.z;
+        const r = perf.scales[i] + TOL_PX * pxWorld * t;
+        if (px * px + py * py + pz * pz < r * r) { best = i; bestT = t; }
+      }
+      return best >= 0 ? perf.nodes[best] : null;
+    }
+
+    function perfSetInstanceScale(i, s) {
+      const m4 = new THREE.Matrix4();
+      const p = perf.positions;
+      m4.makeScale(s, s, s).setPosition(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
+      perf.mesh.setMatrixAt(i, m4);
+      perf.mesh.instanceMatrix.needsUpdate = true;
+    }
+
+    function initPerfPicking() {
+      const el = document.getElementById('graph');
+      let downX = 0, downY = 0, downT = 0;
+      let lastMove = 0;
+
+      const onDown = (ev) => { downX = ev.clientX; downY = ev.clientY; downT = performance.now(); };
+      const onUp = (ev) => {
+        // treat as click only if barely moved and quick — otherwise it was an
+        // OrbitControls drag.
+        const moved = Math.hypot(ev.clientX - downX, ev.clientY - downY);
+        if (moved > 5 || performance.now() - downT > 300) return;
+        const node = perfPickNode(ev.clientX, ev.clientY);
+        if (node) {
+          handleNodeClick(node);
+        } else {
+          handleBackgroundClick();
+        }
+        perfApplyHighlight();
+      };
+      const onMove = (ev) => {
+        const now = performance.now();
+        if (now - lastMove < 33) return; // ~30 Hz
+        lastMove = now;
+        const node = perfPickNode(ev.clientX, ev.clientY);
+        const idx = node ? perf.idToIndex.get(node.id) : -1;
+        if (idx === perf.hoverIdx) return;
+        // restore previous hover scale
+        if (perf.hoverIdx >= 0) perfSetInstanceScale(perf.hoverIdx, perf.scales[perf.hoverIdx]);
+        perf.hoverIdx = idx;
+        if (idx >= 0) perfSetInstanceScale(idx, perf.scales[idx] * 1.8);
+        el.style.cursor = node ? 'pointer' : 'default';
+        handleNodeHover(node || null);
+      };
+
+      el.addEventListener('pointerdown', onDown);
+      el.addEventListener('pointerup', onUp);
+      el.addEventListener('pointermove', onMove);
+      perf.handlers = { pointerdown: onDown, pointerup: onUp, pointermove: onMove };
+    }
+
+    // Single source of truth for node/edge colors in perf mode. Recomputes the
+    // full instanceColor + edge color buffers from {selectedNode, hiddenTags}.
+    // Runs on click/filter (~10ms for 36k/365k), NEVER per hover frame.
+    function perfApplyHighlight() {
+      if (!perf) return;
+      const nbrs = selectedNode ? (neighborSets[selectedNode.id] || new Set()) : null;
+      const selIdx = selectedNode ? perf.idToIndex.get(selectedNode.id) : -1;
+      const col = new THREE.Color();
+      const DIM = 0.82;
+
+      const nodeVisible = new Uint8Array(perf.nodes.length);
+      perf.nodes.forEach((node, i) => {
+        const hidden = hiddenTags.has(String(node.cluster_id));
+        nodeVisible[i] = hidden ? 0 : 1;
+        // scale: 0 hides; restore base otherwise (keeps hover scale coherent)
+        const baseS = node.is_medoid ? 4 : 2;
+        perf.scales[i] = hidden ? 0 : baseS;
+        perfSetInstanceScale(i, i === selIdx ? baseS * 2 : perf.scales[i]);
+
+        let r = perf.baseColors[i * 3], g = perf.baseColors[i * 3 + 1], b = perf.baseColors[i * 3 + 2];
+        if (nbrs && i !== selIdx && !nbrs.has(node.id)) {
+          r *= (1 - DIM); g *= (1 - DIM); b *= (1 - DIM);
+        }
+        col.setRGB(r, g, b);
+        perf.mesh.setColorAt(i, col);
+      });
+      if (perf.mesh.instanceColor) perf.mesh.instanceColor.needsUpdate = true;
+
+      // Edges: bright if incident to the selection, dimmed otherwise, collapsed
+      // to zero length if either endpoint is hidden (rasterizes nothing).
+      const e = perf.edgeSrc.length;
+      const pos = perf.lineGeo.getAttribute('position');
+      const colAttr = perf.lineGeo.getAttribute('color');
+      const p = perf.positions;
+      for (let i = 0; i < e; i++) {
+        const si = perf.edgeSrc[i], ti = perf.edgeDst[i];
+        if (si < 0 || ti < 0) continue;
+        const hidden = !nodeVisible[si] || !nodeVisible[ti];
+        if (hidden) {
+          // both vertices to the same point → zero-length segment
+          for (let k = 0; k < 3; k++) {
+            perf.linePos[i * 6 + k] = p[si * 3 + k];
+            perf.linePos[i * 6 + 3 + k] = p[si * 3 + k];
+          }
+        } else {
+          for (let k = 0; k < 3; k++) {
+            perf.linePos[i * 6 + k] = p[si * 3 + k];
+            perf.linePos[i * 6 + 3 + k] = p[ti * 3 + k];
+          }
+        }
+        const incident = selIdx >= 0 && (si === selIdx || ti === selIdx);
+        const f = (nbrs && !incident) ? (1 - DIM) : 1;
+        for (let v = 0; v < 2; v++) {
+          const ni = v === 0 ? si : ti;
+          perf.lineCol[i * 6 + v * 3]     = perf.baseColors[ni * 3] * 255 * f;
+          perf.lineCol[i * 6 + v * 3 + 1] = perf.baseColors[ni * 3 + 1] * 255 * f;
+          perf.lineCol[i * 6 + v * 3 + 2] = perf.baseColors[ni * 3 + 2] * 255 * f;
+        }
+      }
+      pos.needsUpdate = true;
+      colAttr.needsUpdate = true;
+    }
+
     // ── initGraph ──
 
     async function initGraph(nodes, edges) {
@@ -4990,11 +5333,25 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       if (gpuSim) { gpuSim.dispose(); gpuSim = null; }
       if (_labelRAF) { cancelAnimationFrame(_labelRAF); _labelRAF = null; }
       if (clusterLabelRAF) { cancelAnimationFrame(clusterLabelRAF); clusterLabelRAF = null; }
+      disposePerfScene(); // must run BEFORE Graph._destructor (uses Graph.scene())
       if (Graph && Graph._destructor) { try { Graph._destructor(); } catch (e) { console.warn('Graph teardown:', e); } }
       if (_css2dEl) { _css2dEl.remove(); _css2dEl = null; }
       if (_resizeHandler) { window.removeEventListener('resize', _resizeHandler); _resizeHandler = null; }
 
-      const links = edges.map(e => ({
+      // ── Perf-mode decision ─────────────────────────────────────────────────
+      perfMode = PERF_OVERRIDE === '1' ? true
+               : PERF_OVERRIDE === '0' ? false
+               : isExternalGraph && (nodes.length > PERF_NODE_THRESHOLD || edges.length > PERF_EDGE_THRESHOLD);
+      if (perfMode && !hasBakedLayout(nodes)) {
+        setBootStage('NO PRECOMPUTED LAYOUT — RUN graph_layout.py FOR BETTER RESULTS', 'using sphere fallback');
+        computeFallbackLayout(nodes);
+      }
+      // Small graph WITH baked layout → pin positions, skip physics entirely:
+      // pruned graphs processed by graph_layout.py load instantly.
+      const pinned = !perfMode && isExternalGraph && hasBakedLayout(nodes);
+      if (pinned) nodes.forEach(n => { n.fx = n.x; n.fy = n.y; n.fz = n.z; });
+
+      const links = perfMode ? [] : edges.map(e => ({
         source: e.source,
         target: e.target,
         label_forward: e.label_forward,
@@ -5003,16 +5360,18 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       }));
 
       // Build neighbor lookups for only the active topology's edges
+      // (perf mode included — feeds the detail panel and highlight)
       const activeEdges = edges.filter(e => e.topology === currentLayout);
       rebuildLookups(nodes, activeEdges);
 
       Graph = ForceGraph3D()
         (document.getElementById('graph'))
-        .graphData({ nodes, links })
+        .graphData(perfMode ? { nodes: [], links: [] } : { nodes, links })
         .backgroundColor(`rgba(${hexToRgb(VFX.bgColor.val)},${VFX.bgAlpha.val})`)
         .showNavInfo(false)
-        .warmupTicks(isExternalGraph ? 80 : 40)
-        .cooldownTicks(isExternalGraph ? 200 : Infinity)
+        .warmupTicks(perfMode || pinned ? 0 : (isExternalGraph ? 80 : 40))
+        .cooldownTicks(perfMode || pinned ? 0 : (isExternalGraph ? 200 : Infinity))
+        .enableNodeDrag(!perfMode)
         .nodeThreeObject(node => createNodeObject(node))
         .nodeThreeObjectExtend(false)
         .nodeLabel(node => buildNodeTooltip(node))
@@ -5041,10 +5400,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         })
         .onNodeClick(handleNodeClick)
         .onNodeHover(handleNodeHover)
-        .onBackgroundClick(handleBackgroundClick);
+        // In perf mode graphData is empty, so 3d-force-graph treats EVERY click
+        // as a background click — our picking handlers dispatch both cases.
+        .onBackgroundClick(perfMode ? (() => {}) : handleBackgroundClick);
 
-      // Force configuration (optimized for performance with large graphs)
-      if (isExternalGraph) {
+      // Force configuration (skipped in perf mode: layout is precomputed)
+      if (perfMode) {
+        // no forces — everything is static, rendered by the instanced scene
+      } else if (isExternalGraph) {
         // Reduced forces for faster stabilization on large graphs
         Graph.d3Force('charge').strength(-5); // reduced from -8
         Graph.d3Force('link').distance(50).strength(0.01); // reduced from 60, 0.02
@@ -5223,8 +5586,15 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         })();
       }
 
+      // Perf mode: build the instanced scene (after bloom so passes see it) and
+      // wire custom picking (graphData is empty — built-in raycast is blind).
+      if (perfMode) {
+        buildPerfScene(nodes, edges);
+        initPerfPicking();
+      }
+
       // Set initial camera to the "H" recenter position (zoom out more for large graphs)
-      Graph.cameraPosition({ x: 0, y: 0, z: SCALE * 4 }, { x: 0, y: 0, z: 0 });
+      Graph.cameraPosition({ x: 0, y: 0, z: perfMode ? perfBoundingRadius() * 1.9 : SCALE * 4 }, { x: 0, y: 0, z: 0 });
 
       // Pre-calculate optimal hand-tracking zoom based on graph size
       if (!ht_initialZoomCalculated && appState !== 'onboarding') {
@@ -5400,7 +5770,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         hiddenTags.add(clusterId);
       }
       // Update 3D node visibility
-      if (Graph) {
+      if (perfMode) {
+        perfApplyHighlight(); // hides instances (scale 0) + collapses their edges
+      } else if (Graph) {
         Graph.graphData().nodes.forEach(n => {
           const isHidden = hiddenTags.has(String(n.cluster_id));
           const sph = n.__sphereMat;
@@ -5424,14 +5796,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       document.getElementById('ip-tag-count').textContent = tagCount;
       document.getElementById('readout-tags').textContent = tagCount;
 
-      // Count nodes per cluster
+      // Count nodes per cluster (perf mode: graphData is empty — use the
+      // instanced node list instead)
       const clusterCounts = {};
-      if (Graph) {
-        Graph.graphData().nodes.forEach(n => {
-          const cid = String(n.cluster_id);
-          clusterCounts[cid] = (clusterCounts[cid] || 0) + 1;
-        });
-      }
+      const legendNodes = perfMode && perf ? perf.nodes : (Graph ? Graph.graphData().nodes : []);
+      legendNodes.forEach(n => {
+        const cid = String(n.cluster_id);
+        clusterCounts[cid] = (clusterCounts[cid] || 0) + 1;
+      });
 
       Object.entries(clusterNames).forEach(([id, name]) => {
         const color = CLUSTER_COLORS[id % CLUSTER_COLORS.length];
@@ -6056,6 +6428,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // Calculate optimal camera distance based on graph bounding box
     function calculateOptimalZoom() {
       if (!Graph) return SCALE * 4;
+      if (perfMode && perf) return Math.max(SCALE * 1.5, perfBoundingRadius() * 1.5);
       const nodes = Graph.graphData().nodes;
       if (!nodes || nodes.length === 0) return SCALE * 4;
 
@@ -6801,15 +7174,21 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       }
     }
 
-    // Start hand tracking when the setup screen is hidden (graph is ready)
+    // Start hand tracking when the setup screen is hidden (graph is ready).
+    // ?ob=0 skips the gesture onboarding (straight to the graph — useful for
+    // direct links and automated testing; hand tracking still starts).
+    const _skipOnboarding = new URLSearchParams(location.search).get('ob') === '0';
     const _htObserver = new MutationObserver(() => {
       if (document.getElementById('setup').classList.contains('hidden')) {
         _htObserver.disconnect();
-        // Hide real graph during onboarding so it doesn't bleed through
-        document.getElementById('graph').style.visibility = 'hidden';
-        // Sync spherical coords with initial camera position
         ht_camR = SCALE * 2.5; ht_camPhi = 0; ht_camTheta = Math.PI / 2;
         ht_init();
+        if (_skipOnboarding) {
+          appState = 'ready';
+          return;
+        }
+        // Hide real graph during onboarding so it doesn't bleed through
+        document.getElementById('graph').style.visibility = 'hidden';
         appState = 'onboarding';
         startOnboarding();
       }
