@@ -6571,9 +6571,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const pink = ht_isExtended(lm, 17, 18, 20, 3);
       const n    = [idx, mid, ring, pink].filter(Boolean).length;
       if (n === 0)                        return 'fist';
-      if (idx && !mid && !ring && !pink)  return 'point';
-      if (idx && mid && !ring && !pink)   return 'peace';
       if (n >= 3)                         return 'palm';
+      if (idx && mid && !ring && !pink)   return 'peace';
+      // point tolerates ring/pinky noise: index up + middle down is enough.
+      // (Strict !ring && !pink kicked point out to 'other' on every flicker
+      // of the two fingers that don't matter for the gesture.)
+      if (idx && !mid)                    return 'point';
       return 'other';
     }
 
@@ -6655,11 +6658,33 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       return state.lm;
     }
 
+    const _htVP = new THREE.Matrix4();
     function ht_nearestNode(nx, ny) {
       if (!Graph) return null;
       const sx = nx * window.innerWidth;
       const sy = ny * window.innerHeight;
       let best = null, bestD = Infinity;
+      if (perfMode && perf) {
+        // Perf mode: graphData() is empty — project the instanced positions
+        // manually (36k × ~20 flops per frame, fine while pointing).
+        const cam = Graph.camera();
+        cam.updateMatrixWorld();
+        _htVP.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+        const e = _htVP.elements;
+        const w2 = window.innerWidth / 2, h2 = window.innerHeight / 2;
+        const p = perf.positions;
+        for (let i = 0; i < perf.nodes.length; i++) {
+          if (perf.scales[i] === 0) continue; // hidden by tag filter
+          const x = p[i * 3], y = p[i * 3 + 1], z = p[i * 3 + 2];
+          const cw = e[3] * x + e[7] * y + e[11] * z + e[15];
+          if (cw <= 0) continue; // behind camera
+          const cx = (e[0] * x + e[4] * y + e[8] * z + e[12]) / cw;
+          const cy = (e[1] * x + e[5] * y + e[9] * z + e[13]) / cw;
+          const d = Math.hypot((cx + 1) * w2 - sx, (1 - cy) * h2 - sy);
+          if (d < bestD) { bestD = d; best = perf.nodes[i]; }
+        }
+        return bestD < 100 ? best : null;
+      }
       Graph.graphData().nodes.forEach(n => {
         const sc = Graph.graph2ScreenCoords(n.x, n.y, n.z);
         const d  = Math.hypot(sc.x - sx, sc.y - sy);
