@@ -6411,10 +6411,27 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let ht_candidateFrames = 0;
     let ht_pointPrevFx = null;
     let ht_pointPrevFy = null;
-    const HT_STILL_POINT = 0.012;   // finger stillness threshold for click accumulation
-    const HT_CLICK_FRAMES   = 5;    // hold ~80ms to select (3x faster)
+    const HT_STILL_POINT = 0.012;   // finger stillness threshold (fist-hold reset uses it)
+    const HT_CLICK_FRAMES   = 5;    // legacy hold-to-select frames (superseded by dwell)
     const HT_FIST_FRAMES    = 6;    // hold ~100ms to reset (3x faster)
     const HT_HOVER_FRAMES   = 6;    // consecutive frames needed to commit hover change
+    // Point-select UX:
+    const HT_DWELL_FRAMES   = 12;   // hover the SAME node this long → select (no stillness needed)
+    const HT_DWELL_COOLDOWN = 18;   // frames before the same node can re-trigger after a select
+    const HT_HOVER_GRACE    = 8;    // frames hover survives after the finger drifts off the node
+    const HT_STICKY_FACTOR  = 0.6;  // a rival node must be this fraction closer to steal hover
+    const HT_PINCH_ENTER    = 0.32; // (indexTip↔thumbTip)/handSize below → pinch = instant select
+    const HT_PINCH_EXIT     = 0.45; // above → pinch released (hysteresis)
+    let ht_pinchActive = false;
+    let ht_hoverGraceFrames = 0;
+    // On-graph cursor that follows the fingertip while pointing
+    const ht_cursorEl = document.createElement('div');
+    ht_cursorEl.id = 'ht-cursor';
+    ht_cursorEl.style.cssText =
+      'position:fixed;width:22px;height:22px;border-radius:50%;pointer-events:none;' +
+      'z-index:9999;display:none;transform:translate(-50%,-50%);' +
+      'border:2px solid #ff5533;box-shadow:0 0 0 2px rgba(255,255,255,.85), 0 0 10px rgba(255,85,51,.5)';
+    document.body.appendChild(ht_cursorEl);
     const HT_RELEASE_FRAMES = 120;  // 2s without hand → re-enable mouse
     let ht_zoomCooldown     = 0;    // frames to ignore after zoom ends
     const HT_MIN_CONFIDENCE = 0.75; // minimum hand detection confidence threshold
@@ -6659,7 +6676,24 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     }
 
     const _htVP = new THREE.Matrix4();
-    function ht_nearestNode(nx, ny) {
+    // stickyNode: current hover — a rival must be HT_STICKY_FACTOR× closer to
+    // steal it (stops hover ping-pong in dense regions).
+    function ht_nearestNode(nx, ny, stickyNode = null) {
+      const cand = ht_nearestNodeRaw(nx, ny);
+      if (!cand || !stickyNode || cand.node === stickyNode) return cand ? cand.node : null;
+      const sd = ht_screenDist(stickyNode, nx, ny);
+      if (sd !== null && sd < 100 && cand.d > sd * HT_STICKY_FACTOR) return stickyNode;
+      return cand.node;
+    }
+
+    function ht_screenDist(node, nx, ny) {
+      if (!Graph) return null;
+      const sc = Graph.graph2ScreenCoords(node.x, node.y, node.z);
+      if (!sc) return null;
+      return Math.hypot(sc.x - nx * window.innerWidth, sc.y - ny * window.innerHeight);
+    }
+
+    function ht_nearestNodeRaw(nx, ny) {
       if (!Graph) return null;
       const sx = nx * window.innerWidth;
       const sy = ny * window.innerHeight;
@@ -6683,14 +6717,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           const d = Math.hypot((cx + 1) * w2 - sx, (1 - cy) * h2 - sy);
           if (d < bestD) { bestD = d; best = perf.nodes[i]; }
         }
-        return bestD < 100 ? best : null;
+        return bestD < 100 ? { node: best, d: bestD } : null;
       }
       Graph.graphData().nodes.forEach(n => {
         const sc = Graph.graph2ScreenCoords(n.x, n.y, n.z);
         const d  = Math.hypot(sc.x - sx, sc.y - sy);
         if (d < bestD) { bestD = d; best = n; }
       });
-      return bestD < 100 ? best : null;
+      return bestD < 100 ? { node: best, d: bestD } : null;
     }
 
     let ht_dbgInfo = '';
@@ -6841,6 +6875,25 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const rawGesture = ht_gesture(lm);
       if (DEBUG) ht_dbgInfo = rawGesture + ' ' + ht_extendedState.map(b => b ? '1' : '0').join('');
       const gesture    = ht_debouncedGesture(rawGesture);
+
+      // ── Pinch (index tip ↔ thumb tip) → instant select while hovering ────
+      // Checked before gesture branching: closing the pinch bends the index,
+      // which can briefly flip the classified gesture — the debounce lock
+      // keeps 'point' (and ht_hoverNode) alive long enough for this to fire.
+      {
+        const hs = Math.hypot(lm[9].x - lm[0].x, lm[9].y - lm[0].y) || 1e-6;
+        const pinchD = Math.hypot(lm[8].x - lm[4].x, lm[8].y - lm[4].y) / hs;
+        if (ht_pinchActive) {
+          if (pinchD > HT_PINCH_EXIT) ht_pinchActive = false;
+        } else if (pinchD < HT_PINCH_ENTER) {
+          ht_pinchActive = true;
+          if (ht_hoverNode) {
+            handleNodeClick(ht_hoverNode);
+            ht_pointFrames = -HT_DWELL_COOLDOWN;
+            ht_setLabel('SELECT ✓');
+          }
+        }
+      }
       // Mirror x so it feels like a mirror
       const px = 1 - lm[9].x;
       const py = lm[9].y;
@@ -6895,51 +6948,56 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
         if (!Graph) return;
 
-        // Direct finger→screen mapping: find nearest node to finger position
-        const nearest = ht_nearestNode(fx, fy);
+        // On-graph cursor follows the fingertip — you can SEE where you point
+        ht_cursorEl.style.display = '';
+        ht_cursorEl.style.left = (fx * window.innerWidth) + 'px';
+        ht_cursorEl.style.top  = (fy * window.innerHeight) + 'px';
 
-        // Check if finger is still (for click accumulation)
-        const dx = ht_pointPrevFx !== null ? fx - ht_pointPrevFx : 0;
-        const dy = ht_pointPrevFy !== null ? fy - ht_pointPrevFy : 0;
-        const delta = Math.hypot(dx, dy);
-        ht_pointPrevFx = fx;
-        ht_pointPrevFy = fy;
+        // Nearest node with hover stickiness (rival must be clearly closer)
+        const nearest = ht_nearestNode(fx, fy, ht_hoverNode);
 
-        // If finger moved, update hover to nearest node
-        if (delta > HT_STILL_POINT || nearest !== ht_hoverNode) {
-          if (nearest && nearest !== ht_hoverNode) {
+        if (nearest) {
+          ht_hoverGraceFrames = 0;
+          if (nearest !== ht_hoverNode) {
             ht_hoverNode = nearest;
             ht_pointFrames = 0;
             handleNodeHover(nearest);
           }
+        } else if (ht_hoverNode) {
+          // grace: hover survives brief drifts off the node
+          if (++ht_hoverGraceFrames > HT_HOVER_GRACE) {
+            ht_hoverNode = null;
+            ht_pointFrames = 0;
+            ht_hoverGraceFrames = 0;
+            handleNodeHover(null);
+          }
         }
 
-        // If hovering and finger is still, accumulate click
+        // Dwell-to-select: stay on the SAME node — micro-movement doesn't
+        // reset progress (the old stillness gate made selection a chore).
         const progressRing = document.getElementById('hover-progress-ring');
         const progressArc = document.getElementById('hover-progress-arc');
-        if (ht_hoverNode && delta <= HT_STILL_POINT) {
+        if (ht_hoverNode) {
           ht_pointFrames++;
-          const pct = Math.min(1, ht_pointFrames / HT_CLICK_FRAMES);
-          // Update progress ring
+          const pct = Math.max(0, Math.min(1, ht_pointFrames / HT_DWELL_FRAMES));
           if (progressRing && progressArc) {
-            progressRing.style.display = '';
+            progressRing.style.display = ht_pointFrames > 0 ? '' : 'none';
             const circumference = 2 * Math.PI * 10;
             progressArc.setAttribute('stroke-dashoffset', String(circumference * (1 - pct)));
             const nodeColor = CLUSTER_COLORS[ht_hoverNode.cluster_id % CLUSTER_COLORS.length];
             progressArc.setAttribute('stroke', nodeColor);
           }
-          // Update floating label position
-          if (Graph && ht_hoverNode) {
-            const sp = Graph.graph2ScreenCoords(ht_hoverNode.x, ht_hoverNode.y, ht_hoverNode.z);
-            if (sp) {
-              const hb = document.getElementById('hover-info');
-              hb.style.left = (sp.x + 20) + 'px';
-              hb.style.top = (sp.y - 20) + 'px';
-            }
+          // Floating label follows the hovered node
+          const sp = Graph.graph2ScreenCoords(ht_hoverNode.x, ht_hoverNode.y, ht_hoverNode.z);
+          if (sp) {
+            const hb = document.getElementById('hover-info');
+            hb.style.left = (sp.x + 20) + 'px';
+            hb.style.top = (sp.y - 20) + 'px';
           }
-          if (ht_pointFrames >= HT_CLICK_FRAMES) {
+          if (ht_pointFrames >= HT_DWELL_FRAMES) {
             handleNodeClick(ht_hoverNode);
-            ht_pointFrames = 0;
+            // negative = cooldown before the same node can re-trigger
+            ht_pointFrames = -HT_DWELL_COOLDOWN;
             if (progressRing) progressRing.style.display = 'none';
           }
           ht_setLabel(`→ ${ht_hoverNode.name.slice(0, 18)} [${Math.round(pct * 100)}%]`);
@@ -6949,7 +7007,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           if (progressRing) progressRing.style.display = 'none';
         }
 
-        ht_setLabel(ht_hoverNode ? `→ ${ht_hoverNode.name.slice(0, 20)}` : 'POINT');
+        ht_setLabel('POINT');
         return;
       }
 
@@ -6958,6 +7016,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       ht_candidateFrames = 0;
       ht_pointPrevFx     = null;
       ht_pointPrevFy     = null;
+      ht_hoverGraceFrames = 0;
+      ht_cursorEl.style.display = 'none';
       // Reset hover state and progress ring when leaving point gesture
       const _pr = document.getElementById('hover-progress-ring');
       if (_pr) _pr.style.display = 'none';
