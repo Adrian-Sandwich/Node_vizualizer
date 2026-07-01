@@ -6441,16 +6441,15 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let ht_inertiaRAF = null;
 
     // Fix 2 — Hysteresis for finger extension detection.
-    // Extension is measured rotation-invariantly: ratio of 3D distances
-    // dist(tip, wrist) / dist(pip, wrist). Extended finger ≈ 1.3–1.6,
-    // curled ≈ 0.7–1.0 — independent of hand orientation (the old y-only
-    // comparison broke with a sideways/rotated hand).
-    // Slots: 0=index 1=middle 2=ring 3=pinky 4=thumb.
-    const ht_extendedState = [false, false, false, false, false];
-    const HT_EXT_RATIO_ENTER = 1.28;  // ratio above → extended
-    const HT_EXT_RATIO_EXIT  = 1.12;  // ratio below → curled (hysteresis band)
-    const HT_THUMB_ENTER = 1.35;      // dist(thumbTip, pinkyMCP)/handSize above → out
-    const HT_THUMB_EXIT  = 1.15;
+    // Extension is measured by the bend angle at the PIP joint: cosine between
+    // the vectors PIP→MCP and PIP→TIP. Straight finger ≈ 180° (cos ≈ −0.95),
+    // curled ≈ 60–90° (cos ≈ 0…0.5) — a wide margin, rotation-invariant, and
+    // insensitive to hand size (the old y-only comparison broke with a
+    // sideways/rotated hand; a tip/wrist distance ratio proved too noisy).
+    // Slots: 0=index 1=middle 2=ring 3=pinky.
+    const ht_extendedState = [false, false, false, false];
+    const HT_CURL_COS_ENTER = -0.60;  // cos below (straighter) → extended
+    const HT_CURL_COS_EXIT  = -0.35;  // cos above (more bent) → curled (hysteresis band)
 
     // Fix 3 — Gesture lock + debounce
     let ht_lastGesture = 'other';
@@ -6546,46 +6545,32 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       }
     }
 
-    function ht_dist3(a, b) {
-      const dx = a.x - b.x, dy = a.y - b.y, dz = (a.z || 0) - (b.z || 0);
-      return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    function ht_pipCurlCos(lm, mcp, pip, tip) {
+      // cosine of the bend angle at the PIP joint (vectors PIP→MCP, PIP→TIP)
+      const ax = lm[mcp].x - lm[pip].x, ay = lm[mcp].y - lm[pip].y, az = (lm[mcp].z || 0) - (lm[pip].z || 0);
+      const bx = lm[tip].x - lm[pip].x, by = lm[tip].y - lm[pip].y, bz = (lm[tip].z || 0) - (lm[pip].z || 0);
+      const na = Math.sqrt(ax * ax + ay * ay + az * az) || 1e-6;
+      const nb = Math.sqrt(bx * bx + by * by + bz * bz) || 1e-6;
+      return (ax * bx + ay * by + az * bz) / (na * nb);
     }
 
-    function ht_isExtended(lm, tip, pip, fingerIdx) {
-      // Rotation-invariant: tip farther from wrist than PIP ⇒ finger straight.
-      const wrist = lm[0];
-      const ratio = ht_dist3(lm[tip], wrist) / (ht_dist3(lm[pip], wrist) || 1e-6);
+    function ht_isExtended(lm, mcp, pip, tip, fingerIdx) {
+      const cos = ht_pipCurlCos(lm, mcp, pip, tip);
       if (ht_extendedState[fingerIdx]) {
-        if (ratio < HT_EXT_RATIO_EXIT) ht_extendedState[fingerIdx] = false;
+        if (cos > HT_CURL_COS_EXIT) ht_extendedState[fingerIdx] = false;
       } else {
-        if (ratio > HT_EXT_RATIO_ENTER) ht_extendedState[fingerIdx] = true;
+        if (cos < HT_CURL_COS_ENTER) ht_extendedState[fingerIdx] = true;
       }
       return ht_extendedState[fingerIdx];
     }
 
-    function ht_thumbExtended(lm) {
-      // Thumb doesn't fold toward the wrist, so the tip/pip ratio is useless.
-      // Instead: distance thumb-tip(4) ↔ pinky-MCP(17), normalized by hand size
-      // (wrist(0) ↔ middle-MCP(9)). Tucked thumb crosses the palm → small.
-      const handSize = ht_dist3(lm[0], lm[9]) || 1e-6;
-      const ratio = ht_dist3(lm[4], lm[17]) / handSize;
-      if (ht_extendedState[4]) {
-        if (ratio < HT_THUMB_EXIT) ht_extendedState[4] = false;
-      } else {
-        if (ratio > HT_THUMB_ENTER) ht_extendedState[4] = true;
-      }
-      return ht_extendedState[4];
-    }
-
     function ht_gesture(lm) {
-      const idx  = ht_isExtended(lm, 8,  6,  0);
-      const mid  = ht_isExtended(lm, 12, 10, 1);
-      const ring = ht_isExtended(lm, 16, 14, 2);
-      const pink = ht_isExtended(lm, 20, 18, 3);
-      const thumb = ht_thumbExtended(lm);
+      const idx  = ht_isExtended(lm, 5,  6,  8,  0);
+      const mid  = ht_isExtended(lm, 9,  10, 12, 1);
+      const ring = ht_isExtended(lm, 13, 14, 16, 2);
+      const pink = ht_isExtended(lm, 17, 18, 20, 3);
       const n    = [idx, mid, ring, pink].filter(Boolean).length;
-      // fist requires the thumb tucked too — a thumbs-up no longer pauses.
-      if (n === 0 && !thumb)              return 'fist';
+      if (n === 0)                        return 'fist';
       if (idx && !mid && !ring && !pink)  return 'point';
       if (idx && mid && !ring && !pink)   return 'peace';
       if (n >= 3)                         return 'palm';
@@ -6683,9 +6668,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       return bestD < 100 ? best : null;
     }
 
+    let ht_dbgInfo = '';
     function ht_setLabel(text) {
       const el = document.getElementById('ht-gesture-label');
-      if (el) el.textContent = text;
+      // ?debug=1 appends raw gesture + per-finger extension bits (IMRP) so
+      // classifier thresholds can be tuned live.
+      if (el) el.textContent = DEBUG && ht_dbgInfo ? `${text} · ${ht_dbgInfo}` : text;
     }
 
     function ht_onResults(results) {
@@ -6826,6 +6814,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const lm      = ht_smoothLandmarks(rawLm, ht_emaState);
       ht_drawSkeleton(lm);
       const rawGesture = ht_gesture(lm);
+      if (DEBUG) ht_dbgInfo = rawGesture + ' ' + ht_extendedState.map(b => b ? '1' : '0').join('');
       const gesture    = ht_debouncedGesture(rawGesture);
       // Mirror x so it feels like a mirror
       const px = 1 - lm[9].x;
