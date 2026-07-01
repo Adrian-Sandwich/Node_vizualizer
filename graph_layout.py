@@ -53,9 +53,9 @@ def fibonacci_sphere(n, radius):
 
 
 def layout_sphere(nodes, edges, radius):
-    """Dependency-free fallback: cluster centers (one per domain) on a
-    fibonacci sphere, members on sub-spheres sized by cbrt(count).
-    Mirrored in app.html (computeFallbackLayout) — keep both in sync."""
+    """Dependency-free: cluster centers (one per domain) on a fibonacci
+    sphere, members on sub-spheres sized by cbrt(count). (The in-browser
+    fallback in app.html mirrors --algo radial, not this.)"""
     groups = defaultdict(list)
     for i, n in enumerate(nodes):
         groups[n.get("domain") or "default"].append(i)
@@ -82,6 +82,7 @@ def layout_radial(nodes, edges, radius):
       instead of angular noise.
     - Y is flattened to 0.45 for a galactic-disc silhouette.
     Deterministic, dependency-free, O(iters·E).
+    Mirrored in app.html (computeFallbackLayout) — keep both in sync.
     """
     n = len(nodes)
     idx = {node["id"]: i for i, node in enumerate(nodes)}

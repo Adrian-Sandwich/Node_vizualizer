@@ -5048,10 +5048,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       return ok >= nodes.length * 0.95;
     }
 
-    // JS twin of graph_layout.py --algo sphere (keep in sync): domain-grouped
-    // fibonacci-sphere shells. Used when a huge graph arrives WITHOUT baked
-    // coords — we never run d3 physics at this scale.
-    function computeFallbackLayout(nodes, radius = 1400) {
+    // JS twin of graph_layout.py --algo radial (keep in sync): degree-based
+    // galaxy — hubs at the core, leaves on outer orbits, domains in angular
+    // sectors, directions refined toward neighbors, disc-flattened.
+    // Runs in-browser for ANY graph without baked coords (O(iters·E) ≈
+    // instant even at 365k edges) — the system arranges the graph by itself;
+    // graph_layout.py is only an optional upgrade (DrL organic layout).
+    function computeFallbackLayout(nodes, edges, radius = 1400) {
       const fib = (count, r, out) => {
         const golden = Math.PI * (3 - Math.sqrt(5));
         for (let i = 0; i < count; i++) {
@@ -5062,25 +5065,73 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         }
         return out;
       };
+      const n = nodes.length;
+      const idx = new Map();
+      nodes.forEach((node, i) => idx.set(node.id, i));
+
+      // degree + edge pairs (edges here use source/target ids)
+      const deg = new Float64Array(n);
+      const pairs = [];
+      for (const e of (edges || [])) {
+        const a = idx.get(typeof e.source === 'object' ? e.source.id : e.source);
+        const b = idx.get(typeof e.target === 'object' ? e.target.id : e.target);
+        if (a == null || b == null) continue;
+        deg[a]++; deg[b]++;
+        pairs.push(a, b);
+      }
+      let maxDeg = 1;
+      for (let i = 0; i < n; i++) if (deg[i] > maxDeg) maxDeg = deg[i];
+      const rMin = radius * 0.06, rMax = radius;
+      const logMax = Math.log1p(maxDeg);
+      const radii = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        radii[i] = rMin + (1 - Math.log1p(deg[i]) / logMax) * (rMax - rMin);
+      }
+
+      // initial directions: domain sectors, fibonacci spread inside each
       const groups = new Map();
-      nodes.forEach((n, i) => {
-        const k = n._domain || 'default';
+      nodes.forEach((node, i) => {
+        const k = node._domain || 'default';
         if (!groups.has(k)) groups.set(k, []);
         groups.get(k).push(i);
       });
       const keys = [...groups.keys()].sort();
-      const centers = keys.length > 1 ? fib(keys.length, radius * 0.55, []) : [[0, 0, 0]];
+      const centers = keys.length > 1 ? fib(keys.length, 1.0, []) : [[0, 1, 0]];
+      const dirs = new Float64Array(n * 3);
       keys.forEach((k, gi) => {
-        const members = groups.get(k);
         const [cx, cy, cz] = centers[gi];
-        const subR = radius * 0.45 * Math.cbrt(members.length / Math.max(nodes.length, 1)) + radius * 0.08;
-        const pts = fib(members.length, subR, []);
+        const members = groups.get(k);
+        const pts = fib(members.length, 1.0, []);
         members.forEach((mi, j) => {
-          nodes[mi].x = cx + pts[j][0];
-          nodes[mi].y = cy + pts[j][1];
-          nodes[mi].z = cz + pts[j][2];
+          const vx = cx + 0.45 * pts[j][0], vy = cy + 0.45 * pts[j][1], vz = cz + 0.45 * pts[j][2];
+          const norm = Math.sqrt(vx * vx + vy * vy + vz * vz) || 1;
+          dirs[mi * 3] = vx / norm; dirs[mi * 3 + 1] = vy / norm; dirs[mi * 3 + 2] = vz / norm;
         });
       });
+
+      // refinement sweeps: pull each node toward its neighbors' mean direction
+      const acc = new Float64Array(n * 3);
+      for (let it = 0; it < 3; it++) {
+        for (let i = 0; i < n * 3; i++) acc[i] = dirs[i] * 0.5; // self-weight
+        for (let p = 0; p < pairs.length; p += 2) {
+          const a = pairs[p] * 3, b = pairs[p + 1] * 3;
+          acc[a] += dirs[b]; acc[a + 1] += dirs[b + 1]; acc[a + 2] += dirs[b + 2];
+          acc[b] += dirs[a]; acc[b + 1] += dirs[a + 1]; acc[b + 2] += dirs[a + 2];
+        }
+        for (let i = 0; i < n; i++) {
+          const x = acc[i * 3], y = acc[i * 3 + 1], z = acc[i * 3 + 2];
+          const norm = Math.sqrt(x * x + y * y + z * z);
+          if (norm > 1e-9) {
+            dirs[i * 3] = x / norm; dirs[i * 3 + 1] = y / norm; dirs[i * 3 + 2] = z / norm;
+          }
+        }
+      }
+
+      for (let i = 0; i < n; i++) {
+        nodes[i].x = dirs[i * 3] * radii[i];
+        nodes[i].y = dirs[i * 3 + 1] * radii[i] * 0.45; // flatten → disc
+        nodes[i].z = dirs[i * 3 + 2] * radii[i];
+      }
     }
 
     function perfBoundingRadius() {
@@ -5346,8 +5397,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
                : PERF_OVERRIDE === '0' ? false
                : isExternalGraph && (nodes.length > PERF_NODE_THRESHOLD || edges.length > PERF_EDGE_THRESHOLD);
       if (perfMode && !hasBakedLayout(nodes)) {
-        setBootStage('NO PRECOMPUTED LAYOUT — RUN graph_layout.py FOR BETTER RESULTS', 'using sphere fallback');
-        computeFallbackLayout(nodes);
+        setBootStage('COMPUTING LAYOUT…', 'radial galaxy — bake with graph_layout.py --algo drl for organic layout');
+        computeFallbackLayout(nodes, edges);
       }
       // Small graph WITH baked layout → pin positions, skip physics entirely:
       // pruned graphs processed by graph_layout.py load instantly.
