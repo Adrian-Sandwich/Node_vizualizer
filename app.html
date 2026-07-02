@@ -7188,6 +7188,15 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       // Draw camera feed as background so user can see if hands are in frame
       const video = document.getElementById('ht-video');
       if (video.readyState >= 2) ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      // show the active zoom region (self-tracking crop) on the thumbnail
+      if (tasksCropRegion && video.videoWidth) {
+        const kx = canvas.width / video.videoWidth;
+        const ky = canvas.height / video.videoHeight;
+        ctx.strokeStyle = 'rgba(102,217,255,0.85)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(tasksCropRegion.x * kx, tasksCropRegion.y * ky,
+                       tasksCropRegion.w * kx, tasksCropRegion.h * ky);
+      }
 
       // Filter hands by confidence score
       const rawHands = results.multiHandLandmarks || [];
@@ -7563,6 +7572,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // solution. Loaded dynamically from vendor/; on ANY failure the legacy
     // Pose→crop→Hands pipeline stays in charge (tasksLandmarker stays null).
     const USE_TASKS_API = new URLSearchParams(location.search).get('legacy') !== '1';
+    // Self-tracking zoom+normalize for the Tasks path (?crop=0 disables):
+    // last frame's landmarks → next frame's crop region.
+    const TASKS_CROP = new URLSearchParams(location.search).get('crop') !== '0';
+    let tasksCropRegion = null; // {x,y,w,h} in source px, EMA-smoothed
     let tasksLandmarker = null;
     async function ht_initTasks() {
       const vision = await import('./vendor/mediapipe/tasks-vision/vision_bundle.mjs');
@@ -7851,17 +7864,67 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
             const src = ht_prepFrame();    // bright-background compensation
             _lastFrameSrc = src;
             if (tasksLandmarker) {
-              // Tasks path: one modern detector, full frame, GPU delegate.
-              // try/catch: a single bad frame (e.g. zero-sized video during
-              // resize) must not kill the loop.
+              // Tasks path: modern detector, GPU delegate — with self-tracking
+              // zoom+normalize: the previous frame's landmarks give the hand
+              // region; we crop it (EMA-smoothed), CLAHE-equalize it, and feed
+              // THAT to the model. A lost frame falls back to full-frame
+              // re-acquisition automatically. ?crop=0 disables (A/B test).
+              // try/catch: a single bad frame must not kill the loop.
               try {
-                const res = tasksLandmarker.detectForVideo(src, performance.now());
+                let cropUsed = null;
+                let inputEl = src;
+                if (TASKS_CROP && tasksCropRegion) {
+                  cropUsed = tasksCropRegion;
+                  cropCtx.clearRect(0, 0, CROP_SZ, CROP_SZ);
+                  cropCtx.drawImage(src,
+                    cropUsed.x, cropUsed.y, cropUsed.w, cropUsed.h,
+                    0, 0, CROP_SZ, CROP_SZ);
+                  ht_equalizeCrop(); // local contrast: expose for the hand
+                  inputEl = cropCanvas;
+                }
+                const res = tasksLandmarker.detectForVideo(inputEl, performance.now());
+                let lms = res.landmarks || [];
+                if (cropUsed) {
+                  // crop-space → full-frame normalized coords
+                  lms = lms.map(lm => lm.map(p => ({
+                    x: cropUsed.x / CAM_W + p.x * (cropUsed.w / CAM_W),
+                    y: cropUsed.y / CAM_H + p.y * (cropUsed.h / CAM_H),
+                    z: p.z,
+                  })));
+                }
+                // next-frame crop = union bbox of the hands, squared + margin
+                if (lms.length) {
+                  let minX = 1, minY = 1, maxX = 0, maxY = 0;
+                  for (const lm of lms) for (const p of lm) {
+                    if (p.x < minX) minX = p.x;
+                    if (p.x > maxX) maxX = p.x;
+                    if (p.y < minY) minY = p.y;
+                    if (p.y > maxY) maxY = p.y;
+                  }
+                  const ccx = (minX + maxX) / 2 * CAM_W;
+                  const ccy = (minY + maxY) / 2 * CAM_H;
+                  const side = Math.min(CAM_H,
+                    Math.max(96, Math.max((maxX - minX) * CAM_W, (maxY - minY) * CAM_H) * 1.9));
+                  const raw = {
+                    x: Math.max(0, Math.min(CAM_W - side, ccx - side / 2)),
+                    y: Math.max(0, Math.min(CAM_H - side, ccy - side / 2)),
+                    w: side, h: side,
+                  };
+                  tasksCropRegion = tasksCropRegion ? {
+                    x: CROP_EMA * raw.x + (1 - CROP_EMA) * tasksCropRegion.x,
+                    y: CROP_EMA * raw.y + (1 - CROP_EMA) * tasksCropRegion.y,
+                    w: CROP_EMA * raw.w + (1 - CROP_EMA) * tasksCropRegion.w,
+                    h: CROP_EMA * raw.h + (1 - CROP_EMA) * tasksCropRegion.h,
+                  } : raw;
+                } else {
+                  tasksCropRegion = null; // lost → full-frame next frame
+                }
                 activeCrops = null;
                 ht_onResults({
-                  multiHandLandmarks: res.landmarks || [],
+                  multiHandLandmarks: lms,
                   multiHandedness: (res.handednesses || []).map(h => ({ score: (h && h[0] && h[0].score) || 1 })),
                 });
-              } catch (e) { /* skip frame */ }
+              } catch (e) { tasksCropRegion = null; /* skip frame */ }
             } else if (USE_POSE_CROP) {
               await mpPose.send({ image: src });
             } else {
