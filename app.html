@@ -528,14 +528,14 @@
       bottom: 16px;
       left: 16px;
       z-index: 20;
-      width: 200px;
+      width: 132px;
       border: 1px solid var(--border);
       background: rgba(245,245,245,0.9);
     }
     #ht-video  { display: none; }
     #ht-canvas {
-      width: 200px;
-      height: 112px;
+      width: 132px;
+      height: 74px;
       display: block;
       transform: scaleX(-1);
     }
@@ -1126,6 +1126,50 @@
       color: var(--text);
       border-color: var(--blue);
     }
+    #galaxy-btn {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 10;
+      background: var(--bg-panel);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      padding: 8px 14px;
+      cursor: pointer;
+      transition: color 200ms ease, border-color 200ms ease;
+    }
+    #galaxy-btn:hover {
+      color: var(--text);
+      border-color: #8a7bff;
+    }
+    #bg-toggle {
+      position: fixed;
+      bottom: 20px;
+      right: 122px;
+      z-index: 10;
+      background: var(--bg-panel);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      padding: 8px 14px;
+      cursor: pointer;
+      transition: color 200ms ease, border-color 200ms ease;
+    }
+    #bg-toggle:hover {
+      color: var(--text);
+      border-color: var(--blue);
+    }
 
   </style>
 </head>
@@ -1181,7 +1225,6 @@
     <!-- Title: top-left -->
     <div id="title">GRAPH VISUALIZER</div>
     <button id="reanalyze-btn" class="hidden">RE-ANALYZE</button>
-    <button id="export-kgraph-btn" class="hidden" title="Download this graph as .kgraph.json">EXPORT JSON</button>
 
     <!-- Topology Switcher: top-center -->
     <div id="controls">
@@ -1322,7 +1365,8 @@
     <div id="cluster-labels"></div>
 
     <!-- Config Panel: bottom-right -->
-    <button id="theme-toggle" title="Switch color theme">MINIMAL</button>
+    <button id="galaxy-btn" title="Celestial Dynamics — vista galaxia (G)">✦ GALAXY</button>
+    <button id="bg-toggle" title="Fondo blanco ↔ espacial (B)">◐ FONDO</button>
 
   </div><!-- /main -->
 
@@ -2023,6 +2067,7 @@
         isExternalGraph = true;
         externalGraphMeta = mapped.meta;
         CLUSTER_COLORS = mapped.clusterColors;
+        fileClusterColors = mapped.clusterColors.slice(); // keep the file's own palette for the light theme
         allNodes = mapped.nodes;
         edgeSets = { graph: mapped.edges };
         currentLayout = 'graph';
@@ -2064,7 +2109,7 @@
         document.getElementById('setup').classList.add('hidden');
         document.getElementById('main').classList.remove('hidden');
         document.getElementById('reanalyze-btn').classList.add('hidden');
-        document.getElementById('export-kgraph-btn').classList.remove('hidden');
+        document.getElementById('export-kgraph-btn')?.classList.remove('hidden'); // button removed from release UI
         document.getElementById('controls').style.display = 'none';
         // K-NN row not shown in external graph mode (no longer a visible row)
 
@@ -2152,7 +2197,7 @@
     });
 
     // EXPORT JSON button — download current graph as .kgraph.json
-    document.getElementById('export-kgraph-btn').addEventListener('click', () => {
+    document.getElementById('export-kgraph-btn')?.addEventListener('click', () => {
       let kgraphData;
       if (lastLoadedGraphData) {
         // External graph: use cached export data
@@ -3225,6 +3270,21 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         chromeCyan: '#7aacdf', chromeLightCyan: '#a0c8ef',
         chromeIndigo: '#8a9abf', chromeAmber: '#7aacdf',
       },
+      galaxy: {
+        // Celestial Dynamics — deep-space nebula palette (cyan/blue/violet)
+        bgColor: '#02020a', bgAlpha: 1.0,
+        labelColor: '#dfe6ff', labelAlpha: 1.0,
+        linkColor: '#5d7bff', linkAlpha: 0.35,
+        particleColor: '#9fd8ff', particleAlpha: 1.0,
+        cluster0: '#66d9ff', cluster1: '#7b8cff', cluster2: '#b07bff',
+        cluster3: '#ff7bd5', cluster4: '#a5f3ff', clusterAlpha: 1.0,
+        bloomStrength: 0.75, bloomRadius: 0.55, bloomThreshold: 0.08,
+        chromeBg: '#050510', chromeBgPanel: '#070716', chromeBgPanelA: 0.88,
+        chromeBorder: '#3d3d7a', chromeText: '#c9d2ff', chromeTextDim: '#7a86c9',
+        chromeTextBright: '#eef2ff', chromeAccent: '#8a7bff',
+        chromeCyan: '#66d9ff', chromeLightCyan: '#a5f3ff',
+        chromeIndigo: '#7b8cff', chromeAmber: '#ff7bd5',
+      },
       minimal: {
         bgColor: '#ffffff', bgAlpha: 1.0,
         labelColor: '#222222', labelAlpha: 1.0,
@@ -3271,8 +3331,16 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       refreshChrome();
       refreshPostFx();
 
-      // Update button label
-      document.getElementById('theme-toggle').textContent = name.toUpperCase();
+      // Galaxy dressing: starfield lives only under the galaxy theme
+      if (Graph) {
+        if (name === 'galaxy') ensureStarfield(); else removeStarfield();
+      }
+      // Perf mode bakes node colors into instanced buffers — retint them
+      if (perfMode && perf) perfRebuildBaseColors();
+
+      // Update button label (theme-toggle removed from release UI)
+      const _tt = document.getElementById('theme-toggle');
+      if (_tt) _tt.textContent = name.toUpperCase();
     }
 
     // ═══════════════════════════════════════════════
@@ -3772,7 +3840,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         log(`Pipeline total: ${totalTime}s`);
         setBootStage(`SCOPE ONLINE // ${notes.length} NODES // ${labeledEdges.length} EDGES // ${totalTime}s`, '');
         // Show export button for notes mode
-        document.getElementById('export-kgraph-btn').classList.remove('hidden');
+        document.getElementById('export-kgraph-btn')?.classList.remove('hidden'); // button removed from release UI
         setTimeout(hideBootStatus, 2000);
 
       } catch (err) {
@@ -4022,6 +4090,8 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
 
     function handleNodeClick(node) {
       selectedNode = node;
+      // Hand navigation now orbits around the selected node
+      ht_setOrbitCenter(node.x || 0, node.y || 0, node.z || 0);
       // Reset nav stack when clicking from 3D graph (fresh navigation)
       dcNavStack.length = 0;
       showDetailCard(node);
@@ -4440,6 +4510,8 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       selectedNode = null;
       dcNavStack.length = 0;
       dcMgHitAreas = [];
+      // Deselect → hand navigation orbits the whole graph again
+      ht_setOrbitCenter(0, 0, 0);
       // Perf mode: node/edge colors live in instanced buffers — repaint them
       // or the neighbor-dim from the previous selection sticks forever.
       if (perfMode) perfApplyHighlight();
@@ -4590,6 +4662,15 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         // H: reset camera (perf mode frames the instanced scene's bounds)
         const hz = perfMode ? perfBoundingRadius() * 1.9 : SCALE * 4;
         Graph.cameraPosition({ x: 0, y: 0, z: hz }, { x: 0, y: 0, z: 0 }, 1000);
+      } else if (key === 'g' && Graph) {
+        // G: Celestial Dynamics galaxy view (theme + concentric re-arrange)
+        goGalaxy();
+      } else if (key === 'b' && Graph) {
+        // B: fondo blanco ↔ espacial (light keeps the file's own palette)
+        toggleFondo();
+      } else if (key === 'e' && Graph) {
+        // E: edge density 100% → 60% → 30% (short edges first = cluster look)
+        cycleEdgeDensity();
       } else if (key === 'l' && Graph) {
         // L: toggle labels
         labelsVisible = !labelsVisible;
@@ -4676,7 +4757,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u,
       if (tj >= params.nodeCount || tj == i) { continue; }
       let diff = pi - tile[k].xyz;
       let dist = max(length(diff), 0.1);
-      force -= normalize(diff) * params.chargeStrength / (dist * dist);
+      // NO normalize(): it returns NaN for coincident nodes (baked layouts
+      // round to 2 decimals, so exact collisions DO happen at 36k nodes) and
+      // one NaN infects every node through this all-pairs pass. diff/dist is
+      // safe: coincident pair → zero force.
+      force -= (diff / dist) * params.chargeStrength / (dist * dist);
     }
     workgroupBarrier();
   }
@@ -4705,7 +4790,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let diff = positions[tgt].xyz - positions[src].xyz;
   let dist = max(length(diff), 0.01);
   let displacement = dist - params.linkDistance;
-  let f = normalize(diff) * displacement * params.linkStrength;
+  // diff/dist instead of normalize(): coincident endpoints (possible after
+  // 2-decimal layout rounding) would produce NaN and poison the accumulator.
+  let f = (diff / dist) * displacement * params.linkStrength;
   let fi = vec3i(f * FP_SCALE);
   // Accumulate on source (positive direction)
   atomicAdd(&forceAccum[src * 3u + 0u], fi.x);
@@ -5042,6 +5129,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // ?perf=1 forces perf mode on small graphs (pick-precision testing);
     // ?perf=0 forces the normal path.
     const PERF_OVERRIDE = new URLSearchParams(location.search).get('perf');
+    // ?sim=1 (EXPERIMENTAL): after building the perf scene, relax the layout
+    // LIVE with the WebGPU compute force sim (GPUForceSimulation) for a fixed
+    // number of ticks, then freeze. Chrome + WebGPU only; silently skipped
+    // elsewhere.
+    const PERF_SIM = new URLSearchParams(location.search).get('sim') === '1';
 
     function hasBakedLayout(nodes) {
       if (!nodes.length) return false;
@@ -5180,14 +5272,30 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       });
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
 
-      const e = edges.length;
+      // Sort edges by 3D length (short/local first): the adaptive-quality
+      // draw-range cut then drops the LONGEST hairball edges instead of a
+      // random subset — degraded mode looks cleaner, not "cut".
+      const orderedEdges = edges.slice().sort((a, b) => {
+        const ia = idToIndex.get(a.source), ja = idToIndex.get(a.target);
+        const ib = idToIndex.get(b.source), jb = idToIndex.get(b.target);
+        const len = (i, j) => {
+          if (i == null || j == null) return Infinity;
+          const dx = positions[i * 3] - positions[j * 3];
+          const dy = positions[i * 3 + 1] - positions[j * 3 + 1];
+          const dz = positions[i * 3 + 2] - positions[j * 3 + 2];
+          return dx * dx + dy * dy + dz * dz;
+        };
+        return len(ia, ja) - len(ib, jb);
+      });
+
+      const e = orderedEdges.length;
       const linePos = new Float32Array(e * 6);
       const lineCol = new Uint8Array(e * 6);
       const edgeSrc = new Int32Array(e);
       const edgeDst = new Int32Array(e);
       for (let i = 0; i < e; i++) {
-        const si = idToIndex.get(edges[i].source);
-        const ti = idToIndex.get(edges[i].target);
+        const si = idToIndex.get(orderedEdges[i].source);
+        const ti = idToIndex.get(orderedEdges[i].target);
         edgeSrc[i] = si ?? -1; edgeDst[i] = ti ?? -1;
         if (si == null || ti == null) continue; // both verts stay at origin, zero-length
         linePos[i * 6]     = positions[si * 3];
@@ -5219,7 +5327,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       Graph.scene().add(lines);
       perf = { mesh, lines, sphereGeo, nodeMat, lineGeo, lineMat,
                positions, baseColors, scales, linePos, lineCol,
-               edgeSrc, edgeDst, nodes, idToIndex, handlers: {}, hoverIdx: -1 };
+               edgeSrc, edgeDst, nodes, edges: orderedEdges, idToIndex,
+               origPositions: positions.slice(), // for ARRANGE // ORIGINAL
+               handlers: {}, hoverIdx: -1 };
     }
 
     function disposePerfScene() {
@@ -5321,20 +5431,30 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const nbrs = selectedNode ? (neighborSets[selectedNode.id] || new Set()) : null;
       const selIdx = selectedNode ? perf.idToIndex.get(selectedNode.id) : -1;
       const col = new THREE.Color();
-      const DIM = 0.82;
+      // "Transparency" for non-neighbors: InstancedMesh has no per-instance
+      // opacity, so we fake it — blend the color toward the BACKGROUND (reads
+      // as translucency on any solid bg) and shrink the instance (kills the
+      // occlusion a big dark blob would cause).
+      const FADE = 0.88;       // 0..1 — how far non-neighbor colors sink into the bg
+      const SHRINK = 0.45;     // non-neighbor scale factor while a selection is active
+      const bg = new THREE.Color(VFX.bgColor.val);
 
       const nodeVisible = new Uint8Array(perf.nodes.length);
       perf.nodes.forEach((node, i) => {
         const hidden = hiddenTags.has(String(node.cluster_id));
         nodeVisible[i] = hidden ? 0 : 1;
-        // scale: 0 hides; restore base otherwise (keeps hover scale coherent)
         const baseS = node.is_medoid ? 5 : 3;
-        perf.scales[i] = hidden ? 0 : baseS;
+        const dimmed = nbrs && i !== selIdx && !nbrs.has(node.id);
+        // scale: 0 hides; dimmed nodes shrink (perf.scales feeds picking and
+        // hover-restore, so keep the visual scale there)
+        perf.scales[i] = hidden ? 0 : (dimmed ? baseS * SHRINK : baseS);
         perfSetInstanceScale(i, i === selIdx ? baseS * 2 : perf.scales[i]);
 
         let r = perf.baseColors[i * 3], g = perf.baseColors[i * 3 + 1], b = perf.baseColors[i * 3 + 2];
-        if (nbrs && i !== selIdx && !nbrs.has(node.id)) {
-          r *= (1 - DIM); g *= (1 - DIM); b *= (1 - DIM);
+        if (dimmed) {
+          r = r * (1 - FADE) + bg.r * FADE;
+          g = g * (1 - FADE) + bg.g * FADE;
+          b = b * (1 - FADE) + bg.b * FADE;
         }
         col.setRGB(r, g, b);
         perf.mesh.setColorAt(i, col);
@@ -5364,16 +5484,370 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           }
         }
         const incident = selIdx >= 0 && (si === selIdx || ti === selIdx);
-        const f = (nbrs && !incident) ? (1 - DIM) : 1;
+        // non-incident edges sink almost fully into the background (edge
+        // "transparency" — vertex colors are vec3, so blend instead of alpha)
+        const f = (nbrs && !incident) ? 0.06 : 1;
         for (let v = 0; v < 2; v++) {
           const ni = v === 0 ? si : ti;
-          perf.lineCol[i * 6 + v * 3]     = perf.baseColors[ni * 3] * 255 * f;
-          perf.lineCol[i * 6 + v * 3 + 1] = perf.baseColors[ni * 3 + 1] * 255 * f;
-          perf.lineCol[i * 6 + v * 3 + 2] = perf.baseColors[ni * 3 + 2] * 255 * f;
+          perf.lineCol[i * 6 + v * 3]     = (perf.baseColors[ni * 3] * f + bg.r * (1 - f)) * 255;
+          perf.lineCol[i * 6 + v * 3 + 1] = (perf.baseColors[ni * 3 + 1] * f + bg.g * (1 - f)) * 255;
+          perf.lineCol[i * 6 + v * 3 + 2] = (perf.baseColors[ni * 3 + 2] * f + bg.b * (1 - f)) * 255;
         }
       }
       pos.needsUpdate = true;
       colAttr.needsUpdate = true;
+    }
+
+    // ═══ GALAXY VIEW (Celestial Dynamics) ══════════════════════════════════
+    // Deep-space dressing (starfield + nebula theme) plus an on-demand
+    // spiral-galaxy re-arrangement animated from wherever the nodes are.
+    let _starfield = null;
+    let _galaxyAnimRAF = null;
+
+    // Spiral-galaxy arrangement (aesthetics-first): logarithmic spiral arms,
+    // dense core, thin disc with a central bulge. Degree decides orbit
+    // (hubs in the core, leaves outward); domains map to arms — large
+    // domains span several arms so no single arm bloats.
+    function computeSpiralGalaxyLayout(nodes, edges, radius = 1400) {
+      const ARMS = 4;
+      const SWIRL = 2.4 * Math.PI; // total twist across the disc
+      const n = nodes.length;
+      const idx = new Map();
+      nodes.forEach((nd, i) => idx.set(nd.id, i));
+      const deg = new Float64Array(n);
+      for (const e of (edges || [])) {
+        const a = idx.get(typeof e.source === 'object' ? e.source.id : e.source);
+        const b = idx.get(typeof e.target === 'object' ? e.target.id : e.target);
+        if (a == null || b == null) continue;
+        deg[a]++; deg[b]++;
+      }
+      let maxDeg = 1;
+      for (let i = 0; i < n; i++) if (deg[i] > maxDeg) maxDeg = deg[i];
+      const logMax = Math.log1p(maxDeg);
+      let seed = 1234567; // deterministic
+      const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+      const gauss = () => (rnd() + rnd() + rnd() - 1.5) / 1.5;
+      // arm assignment: base arm per domain; domains bigger than one arm's
+      // share spread across several consecutive arms
+      const domSize = new Map(), domBase = new Map();
+      nodes.forEach(nd => {
+        const k = nd._domain || 'default';
+        domSize.set(k, (domSize.get(k) || 0) + 1);
+        if (!domBase.has(k)) domBase.set(k, domBase.size % ARMS);
+      });
+      const armShare = n / ARMS;
+      nodes.forEach((nd, i) => {
+        const k = nd._domain || 'default';
+        const spread = Math.max(1, Math.min(ARMS, Math.ceil(domSize.get(k) / armShare)));
+        const arm = (domBase.get(k) + ((rnd() * spread) | 0)) % ARMS;
+        const t = 1 - Math.log1p(deg[i]) / logMax; // 0 = hub … 1 = leaf
+        const rNorm = Math.min(1, Math.max(0.02, Math.pow(t, 1.25) + gauss() * 0.05));
+        const rr = radius * (0.05 + 0.95 * rNorm);
+        const theta = arm * (2 * Math.PI / ARMS)
+                    + (rr / radius) * SWIRL
+                    + gauss() * (0.18 + 0.5 * (1 - rr / radius)); // fuzzier near the core
+        const thick = radius * (0.15 * Math.pow(1 - rr / radius, 1.6) + 0.02); // bulge
+        nd.x = rr * Math.cos(theta);
+        nd.z = rr * Math.sin(theta);
+        nd.y = gauss() * thick;
+      });
+    }
+
+    function ensureStarfield() {
+      if (_starfield || !Graph) return;
+      const R = (perfMode && perf) ? perfBoundingRadius() : SCALE * 5;
+      const N = 4500;
+      const pos = new Float32Array(N * 3);
+      const col = new Float32Array(N * 3);
+      const tints = [[1, 1, 1], [0.75, 0.85, 1], [0.7, 0.75, 1], [0.85, 0.7, 1], [1, 0.85, 0.9]];
+      let seed = 42; // deterministic — same sky every load
+      const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+      for (let i = 0; i < N; i++) {
+        const r = R * (1.6 + 4.4 * Math.pow(rnd(), 0.7)); // shell 1.6R–6R
+        const u = rnd() * 2 - 1, ph = rnd() * Math.PI * 2;
+        const s = Math.sqrt(1 - u * u);
+        pos[i * 3] = r * s * Math.cos(ph);
+        pos[i * 3 + 1] = r * u;
+        pos[i * 3 + 2] = r * s * Math.sin(ph);
+        const t = tints[(rnd() * tints.length) | 0];
+        const b = 0.45 + rnd() * 0.55;
+        col[i * 3] = t[0] * b; col[i * 3 + 1] = t[1] * b; col[i * 3 + 2] = t[2] * b;
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      const mat = new THREE.PointsMaterial({
+        size: R * 0.01, vertexColors: true, transparent: true, opacity: 0.9,
+        sizeAttenuation: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      });
+      _starfield = new THREE.Points(geo, mat);
+      _starfield.frustumCulled = false;
+      Graph.scene().add(_starfield);
+      // stars sit out to ~6R — make sure the camera can see them
+      const cam = Graph.camera();
+      if (cam.far < R * 9) { cam.far = R * 9; cam.updateProjectionMatrix(); }
+    }
+
+    function removeStarfield() {
+      if (!_starfield) return;
+      try {
+        const s = Graph && Graph.scene && Graph.scene();
+        if (s) s.remove(_starfield);
+      } catch (e) { /* scene already gone */ }
+      _starfield.geometry.dispose();
+      _starfield.material.dispose();
+      _starfield = null;
+    }
+
+    // Re-derive the instanced base colors from CLUSTER_COLORS (themes change
+    // them) and repaint.
+    function perfRebuildBaseColors() {
+      if (!perf) return;
+      const col = new THREE.Color();
+      perf.nodes.forEach((node, i) => {
+        col.set(CLUSTER_COLORS[node.cluster_id % CLUSTER_COLORS.length] || '#888888');
+        perf.baseColors[i * 3] = col.r;
+        perf.baseColors[i * 3 + 1] = col.g;
+        perf.baseColors[i * 3 + 2] = col.b;
+      });
+      perfApplyHighlight();
+    }
+
+    // Animate the graph between arrangements from wherever the nodes are.
+    // Modes: 'spiral' (galaxy arms) · 'sphere' (concentric radial disc) ·
+    // 'original' (positions as loaded). Works in perf and normal modes.
+    function galaxyArrange(mode = 'spiral', duration = 2200) {
+      if (_galaxyAnimRAF) { cancelAnimationFrame(_galaxyAnimRAF); _galaxyAnimRAF = null; }
+      const ease = t => 1 - Math.pow(1 - t, 3);
+      if (perfMode && perf) {
+        const n = perf.nodes.length;
+        const start = perf.positions.slice();
+        const target = new Float32Array(n * 3);
+        if (mode === 'original') {
+          target.set(perf.origPositions);
+          perf.nodes.forEach((nd, i) => {
+            nd.x = target[i * 3]; nd.y = target[i * 3 + 1]; nd.z = target[i * 3 + 2];
+          });
+        } else {
+          if (mode === 'sphere') computeFallbackLayout(perf.nodes, perf.edges);
+          else computeSpiralGalaxyLayout(perf.nodes, perf.edges);
+          perf.nodes.forEach((nd, i) => {
+            target[i * 3] = nd.x; target[i * 3 + 1] = nd.y; target[i * 3 + 2] = nd.z;
+          });
+        }
+        let maxR2 = 0;
+        for (let k = 0; k < n * 3; k += 3) {
+          const r2 = target[k] * target[k] + target[k + 1] * target[k + 1] + target[k + 2] * target[k + 2];
+          if (r2 > maxR2) maxR2 = r2;
+        }
+        // frame the incoming arrangement while it animates — tilted overhead
+        // for the discs (edge-on they're just a line), frontal for original
+        ht_setOrbitCenter(0, 0, 0);
+        const fr = Math.sqrt(maxR2) || SCALE * 4;
+        const camTo = mode === 'original'
+          ? { x: 0, y: 0, z: fr * 1.9 }
+          : { x: 0, y: fr * 1.7, z: fr * 1.15 };
+        Graph.cameraPosition(camTo, { x: 0, y: 0, z: 0 }, duration);
+        const m4 = new THREE.Matrix4();
+        const t0 = performance.now();
+        const step = () => {
+          if (!perf) { _galaxyAnimRAF = null; return; }
+          const t = Math.min(1, (performance.now() - t0) / duration);
+          const e = ease(t);
+          for (let k = 0; k < n * 3; k++) {
+            perf.positions[k] = start[k] + (target[k] - start[k]) * e;
+          }
+          for (let i = 0; i < n; i++) {
+            const s = perf.scales[i] || 0.0001;
+            m4.makeScale(s, s, s).setPosition(
+              perf.positions[i * 3], perf.positions[i * 3 + 1], perf.positions[i * 3 + 2]);
+            perf.mesh.setMatrixAt(i, m4);
+          }
+          perf.mesh.instanceMatrix.needsUpdate = true;
+          for (let i = 0; i < perf.edgeSrc.length; i++) {
+            const si = perf.edgeSrc[i], ti = perf.edgeDst[i];
+            if (si < 0 || ti < 0) continue;
+            for (let k = 0; k < 3; k++) {
+              perf.linePos[i * 6 + k] = perf.positions[si * 3 + k];
+              perf.linePos[i * 6 + 3 + k] = perf.positions[ti * 3 + k];
+            }
+          }
+          perf.lineGeo.getAttribute('position').needsUpdate = true;
+          if (t < 1) { _galaxyAnimRAF = requestAnimationFrame(step); }
+          else {
+            _galaxyAnimRAF = null;
+            perf.nodes.forEach((nd, i) => {
+              nd.x = perf.positions[i * 3];
+              nd.y = perf.positions[i * 3 + 1];
+              nd.z = perf.positions[i * 3 + 2];
+            });
+          }
+        };
+        _galaxyAnimRAF = requestAnimationFrame(step);
+      } else if (Graph) {
+        const nodes = Graph.graphData().nodes;
+        if (!nodes.length) return;
+        if (mode === 'original') {
+          // release the pins and let d3 re-settle the graph naturally
+          nodes.forEach(nd => { nd.fx = undefined; nd.fy = undefined; nd.fz = undefined; });
+          Graph.d3ReheatSimulation();
+          ht_setOrbitCenter(0, 0, 0);
+          Graph.cameraPosition({ x: 0, y: 0, z: SCALE * 4 }, { x: 0, y: 0, z: 0 }, duration);
+          return;
+        }
+        const start = nodes.map(nd => [nd.x || 0, nd.y || 0, nd.z || 0]);
+        const links = Graph.graphData().links.map(l => ({
+          source: typeof l.source === 'object' ? l.source.id : l.source,
+          target: typeof l.target === 'object' ? l.target.id : l.target,
+        }));
+        if (mode === 'sphere') computeFallbackLayout(nodes, links, SCALE * 4);
+        else computeSpiralGalaxyLayout(nodes, links, SCALE * 4);
+        const target = nodes.map(nd => [nd.x, nd.y, nd.z]);
+        ht_setOrbitCenter(0, 0, 0);
+        Graph.cameraPosition({ x: 0, y: SCALE * 4 * 1.7, z: SCALE * 4 * 1.15 }, { x: 0, y: 0, z: 0 }, duration);
+        const t0 = performance.now();
+        const step = () => {
+          if (!Graph) { _galaxyAnimRAF = null; return; }
+          const t = Math.min(1, (performance.now() - t0) / duration);
+          const e = ease(t);
+          nodes.forEach((nd, i) => {
+            nd.fx = start[i][0] + (target[i][0] - start[i][0]) * e;
+            nd.fy = start[i][1] + (target[i][1] - start[i][1]) * e;
+            nd.fz = start[i][2] + (target[i][2] - start[i][2]) * e;
+          });
+          Graph.d3ReheatSimulation();
+          _galaxyAnimRAF = t < 1 ? requestAnimationFrame(step) : null;
+        };
+        _galaxyAnimRAF = requestAnimationFrame(step);
+      }
+    }
+
+    // Light ↔ space toggle (B / FONDO button). Light = white background with
+    // the GRAPH FILE's own domain palette (not the theme's monochrome);
+    // space = the galaxy theme + starfield.
+    let fileClusterColors = null;
+    function toggleFondo() {
+      if (currentTheme === 'galaxy') {
+        applyTheme('minimal');
+        if (fileClusterColors) {
+          CLUSTER_COLORS = fileClusterColors.slice();
+          if (perfMode && perf) perfRebuildBaseColors();
+        }
+      } else {
+        applyTheme('galaxy');
+      }
+    }
+
+    // Manual edge density (E): edges are length-sorted, so lower densities
+    // keep the short intra-cluster edges and drop the long hairball ones —
+    // the same soft look the adaptive-quality mode produces under low fps,
+    // but on demand.
+    const EDGE_DENSITY_STEPS = [1.0, 0.6, 0.3];
+    let _edgeDensityIdx = 0;
+    function cycleEdgeDensity() {
+      if (!perfMode || !perf) return;
+      _edgeDensityIdx = (_edgeDensityIdx + 1) % EDGE_DENSITY_STEPS.length;
+      const f = EDGE_DENSITY_STEPS[_edgeDensityIdx];
+      perf.lineGeo.setDrawRange(0, Math.floor(perf.edgeSrc.length * f) * 2);
+      setBootStage(`ARISTAS // ${Math.round(f * 100)}%`, 'cortas primero · E cicla');
+      setTimeout(hideBootStatus, 1500);
+    }
+
+    // G / GALAXY button: first press enters the galaxy view (theme + spiral),
+    // each further press cycles the arrangement.
+    const ARRANGE_CYCLE = ['spiral', 'original'];
+    let _arrangeIdx = -1;
+    function goGalaxy() {
+      if (currentTheme !== 'galaxy') applyTheme('galaxy');
+      _arrangeIdx = (_arrangeIdx + 1) % ARRANGE_CYCLE.length;
+      const mode = ARRANGE_CYCLE[_arrangeIdx];
+      galaxyArrange(mode);
+      setBootStage(`ARRANGE // ${mode.toUpperCase()}`, 'G alterna: espiral ↔ original');
+      setTimeout(hideBootStatus, 1800);
+      const btn = document.getElementById('galaxy-btn');
+      if (btn) btn.textContent = `✦ ${mode.toUpperCase()}`;
+    }
+
+    // EXPERIMENTAL (?sim=1): live GPU relax of the perf-mode layout. Acquires
+    // its own WebGPU device (the global gpuAvailable stays false — it gates
+    // unrelated dormant paths), runs the existing GPUForceSimulation for a
+    // bounded number of ticks streaming positions into the instanced buffers,
+    // then disposes. Uses the module-level gpuSim var so initGraph teardown
+    // kills it on reload.
+    async function perfRunLiveSim(nodes, edges) {
+      if (!('gpu' in navigator)) { setBootStage('WEBGPU NOT AVAILABLE', 'live sim skipped'); return; }
+      let device;
+      try {
+        const adapter = await navigator.gpu.requestAdapter();
+        device = await adapter.requestDevice();
+      } catch (e) { console.warn('[perfSim] no WebGPU device:', e); return; }
+      if (!perf) return; // graph got torn down while we awaited
+      gpuSim = new GPUForceSimulation(device, nodes, edges, currentLayout, SCALE);
+      // CRITICAL: the constructor fills the position-force target buffer with
+      // ZEROS — the default positionStrength (0.18) then yanks all 36k nodes
+      // into the origin within a few ticks (graph "disappears"), where the
+      // unclamped charge force explodes to NaN. Anchor the targets to the
+      // baked layout and keep the anchor weak: charge+link relax locally
+      // while the galaxy keeps its global shape.
+      const tgt = new Float32Array(nodes.length * 4);
+      nodes.forEach((n, i) => {
+        tgt[i * 4] = n.x || 0;
+        tgt[i * 4 + 1] = n.y || 0;
+        tgt[i * 4 + 2] = n.z || 0;
+      });
+      device.queue.writeBuffer(gpuSim.targetBuffer, 0, tgt);
+      gpuSim.params.positionStrength = 0.03;
+      gpuSim.setChargeStrength(-6);
+      gpuSim.setLinkStrength(0.015, 60); // also flushes positionStrength via _writeParams
+      const m4 = new THREE.Matrix4();
+      const MAX_TICKS = 240;
+      let ticks = 0;
+      setBootStage('LIVE GPU SIM…', 'relaxing layout');
+      const loop = () => {
+        if (!gpuSim || gpuSim._disposed || !perf || ticks >= MAX_TICKS) {
+          if (gpuSim) { gpuSim.dispose(); gpuSim = null; }
+          if (perf) setBootStage(`LIVE SIM SETTLED // ${ticks} TICKS`, '');
+          return;
+        }
+        gpuSim.tick().then(() => {
+          if (!gpuSim || !perf) return;
+          ticks++;
+          perf.positions.set(gpuSim.positions.subarray(0, perf.positions.length));
+          if (DEBUG && (ticks === 1 || ticks % 60 === 0)) {
+            let bad = 0, r2max = 0;
+            for (let k = 0; k < perf.positions.length; k += 3) {
+              const x = perf.positions[k], y = perf.positions[k + 1], z = perf.positions[k + 2];
+              if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) { bad++; continue; }
+              const r2 = x * x + y * y + z * z;
+              if (r2 > r2max) r2max = r2;
+            }
+            log(`[perfSim] tick=${ticks} nonfinite=${bad} maxR=${Math.sqrt(r2max).toFixed(1)}`);
+          }
+          for (let i = 0; i < perf.nodes.length; i++) {
+            const s = perf.scales[i] || 0.0001;
+            const x = perf.positions[i * 3], y = perf.positions[i * 3 + 1], z = perf.positions[i * 3 + 2];
+            m4.makeScale(s, s, s).setPosition(x, y, z);
+            perf.mesh.setMatrixAt(i, m4);
+            // keep node records in sync (picking + click camera-fly)
+            perf.nodes[i].x = x; perf.nodes[i].y = y; perf.nodes[i].z = z;
+          }
+          perf.mesh.instanceMatrix.needsUpdate = true;
+          for (let i = 0; i < perf.edgeSrc.length; i++) {
+            const si = perf.edgeSrc[i], ti = perf.edgeDst[i];
+            if (si < 0 || ti < 0) continue;
+            for (let k = 0; k < 3; k++) {
+              perf.linePos[i * 6 + k] = perf.positions[si * 3 + k];
+              perf.linePos[i * 6 + 3 + k] = perf.positions[ti * 3 + k];
+            }
+          }
+          perf.lineGeo.getAttribute('position').needsUpdate = true;
+          requestAnimationFrame(loop);
+        }).catch(e => {
+          console.warn('[perfSim] tick error:', e);
+          if (gpuSim) { gpuSim.dispose(); gpuSim = null; }
+        });
+      };
+      requestAnimationFrame(loop);
     }
 
     // ── initGraph ──
@@ -5391,6 +5865,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       if (gpuSim) { gpuSim.dispose(); gpuSim = null; }
       if (_labelRAF) { cancelAnimationFrame(_labelRAF); _labelRAF = null; }
       if (clusterLabelRAF) { cancelAnimationFrame(clusterLabelRAF); clusterLabelRAF = null; }
+      if (_galaxyAnimRAF) { cancelAnimationFrame(_galaxyAnimRAF); _galaxyAnimRAF = null; }
+      _arrangeIdx = -1; // fresh graph → next G starts at spiral
+      const _gbtn = document.getElementById('galaxy-btn');
+      if (_gbtn) _gbtn.textContent = '✦ GALAXY';
+      removeStarfield();  // belongs to the old scene
       disposePerfScene(); // must run BEFORE Graph._destructor (uses Graph.scene())
       if (Graph && Graph._destructor) { try { Graph._destructor(); } catch (e) { console.warn('Graph teardown:', e); } }
       if (_css2dEl) { _css2dEl.remove(); _css2dEl = null; }
@@ -5649,7 +6128,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       if (perfMode) {
         buildPerfScene(nodes, edges);
         initPerfPicking();
+        if (PERF_SIM) perfRunLiveSim(nodes, edges); // fire-and-forget, bounded
       }
+      // If the galaxy theme is active, dress the fresh scene again (teardown
+      // removed the previous starfield with the old scene).
+      if (currentTheme === 'galaxy') ensureStarfield();
+      // ?galaxy=1 — open straight into the Celestial Dynamics galaxy view
+      if (new URLSearchParams(location.search).get('galaxy') === '1') setTimeout(goGalaxy, 400);
 
       // Set initial camera to the "H" recenter position (zoom out more for large graphs)
       Graph.cameraPosition({ x: 0, y: 0, z: perfMode ? perfBoundingRadius() * 1.9 : SCALE * 4 }, { x: 0, y: 0, z: 0 });
@@ -5726,6 +6211,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
                 const qualityLabel = document.querySelector('.quality-reduced-label');
                 if (qualityLabel) qualityLabel.style.display = 'block';
               }
+              // Perf mode: fill-rate is the killer at 365k translucent
+              // segments — draw only the shortest 40% while struggling
+              // (unless the user's manual E density is already lower).
+              if (perfMode && perf && !perf._rangeCut && EDGE_DENSITY_STEPS[_edgeDensityIdx] > 0.4) {
+                perf._rangeCut = true;
+                perf.lineGeo.setDrawRange(0, Math.floor(perf.edgeSrc.length * 0.4) * 2);
+              }
               fpsRecoveryFrames = 0;
             } else if (avgFps < 30) {
               if (qualityState !== 'reduced') {
@@ -5744,6 +6236,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
                 qualityState = 'normal';
                 if (VFX.bloomStrength) VFX.bloomStrength.val = userBloomStrength;
                 if (VFX.particleCount) VFX.particleCount.val = 30;
+                if (perfMode && perf && perf._rangeCut) {
+                  perf._rangeCut = false;
+                  // restore to the user's manual density, not blindly to 100%
+                  const f = EDGE_DENSITY_STEPS[_edgeDensityIdx];
+                  perf.lineGeo.setDrawRange(0, f >= 1 ? Infinity : Math.floor(perf.edgeSrc.length * f) * 2);
+                }
                 Graph.refresh();
                 const qualityLabel = document.querySelector('.quality-reduced-label');
                 if (qualityLabel) qualityLabel.style.display = 'none';
@@ -6041,11 +6539,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     }
 
     // Toggle color theme
-    document.getElementById('theme-toggle').addEventListener('click', () => {
-      const names = Object.keys(COLOR_THEMES);
-      const next = names[(names.indexOf(currentTheme) + 1) % names.length];
-      applyTheme(next);
-    });
+    document.getElementById('galaxy-btn').addEventListener('click', () => goGalaxy());
+    document.getElementById('bg-toggle').addEventListener('click', () => toggleFondo());
 
     // (label-toggle and config panel removed from release build)
 
@@ -6444,8 +6939,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // Fist-pause system
     let htPaused            = false;  // hand tracking paused?
     let htPauseFistFrames   = 0;      // frames fist held for pause toggle
-    const HT_PAUSE_FRAMES   = 15;    // ~500ms at 30fps to enable pause
-    const HT_UNPAUSE_FRAMES = 45;    // ~1500ms at 30fps to disable pause (3x longer)
+    const HT_PAUSE_FRAMES   = 45;    // ~1.5s at 30fps to enable pause — long on purpose: a brief accidental fist must NOT lock the controls
+    const HT_UNPAUSE_FRAMES = 45;    // same duration to unlock (symmetric feel)
     const HT_ZOOM_COOLDOWN  = 10;   // ~330ms grace period after zoom
 
     // Fist-still detection for reset
@@ -6528,6 +7023,27 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       return Math.max(SCALE * 1.5, radius * 1.5);
     }
 
+    // Orbit center for hand navigation: the origin normally, the selected
+    // node after a select — so palm-rotate/zoom orbit AROUND the selection
+    // instead of snapping back to the global view.
+    const ht_orbitCenter = { x: 0, y: 0, z: 0 };
+    function ht_setOrbitCenter(x, y, z) {
+      ht_orbitCenter.x = x; ht_orbitCenter.y = y; ht_orbitCenter.z = z;
+    }
+    // Re-sync spherical coords from the CURRENT camera relative to the orbit
+    // center. Called on the first rotation frame after any other gesture or
+    // camera fly, so rotation always continues from where the camera is.
+    function ht_syncSpherical() {
+      if (!Graph) return;
+      const p = Graph.camera().position;
+      const rx = p.x - ht_orbitCenter.x;
+      const ry = p.y - ht_orbitCenter.y;
+      const rz = p.z - ht_orbitCenter.z;
+      ht_camR = Math.max(1, Math.hypot(rx, ry, rz));
+      ht_camTheta = Math.acos(Math.max(-1, Math.min(1, ry / ht_camR)));
+      ht_camPhi = Math.atan2(rx, rz);
+    }
+
     function ht_updateCamera() {
       if (!Graph) return;
       const sinT = Math.sin(ht_camTheta);
@@ -6535,8 +7051,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const sinP = Math.sin(ht_camPhi);
       const cosP = Math.cos(ht_camPhi);
       Graph.cameraPosition(
-        { x: ht_camR * sinT * sinP, y: ht_camR * cosT, z: ht_camR * sinT * cosP },
-        { x: 0, y: 0, z: 0 },
+        { x: ht_orbitCenter.x + ht_camR * sinT * sinP,
+          y: ht_orbitCenter.y + ht_camR * cosT,
+          z: ht_orbitCenter.z + ht_camR * sinT * cosP },
+        ht_orbitCenter,
         0
       );
     }
@@ -6747,6 +7265,15 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       // Draw camera feed as background so user can see if hands are in frame
       const video = document.getElementById('ht-video');
       if (video.readyState >= 2) ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      // show the active zoom region (self-tracking crop) on the thumbnail
+      if (tasksCropRegion && video.videoWidth) {
+        const kx = canvas.width / video.videoWidth;
+        const ky = canvas.height / video.videoHeight;
+        ctx.strokeStyle = 'rgba(102,217,255,0.85)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(tasksCropRegion.x * kx, tasksCropRegion.y * ky,
+                       tasksCropRegion.w * kx, tasksCropRegion.h * ky);
+      }
 
       // Filter hands by confidence score
       const rawHands = results.multiHandLandmarks || [];
@@ -7092,6 +7619,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       // ── Any gesture (palm/fist-moving/other) → rotate ─────────────────────
       // Cancel inertia — user is taking control
       if (ht_inertiaRAF) { cancelAnimationFrame(ht_inertiaRAF); ht_inertiaRAF = null; }
+      if (ht_prevX === null) {
+        // First rotation frame after another gesture / camera fly: pick up
+        // the camera where it IS (relative to the orbit center) instead of
+        // snapping back to the stale spherical coords.
+        ht_syncSpherical();
+      }
       if (ht_prevX !== null) {
         const dx = px - ht_prevX;
         const dy = py - ht_prevY;
@@ -7109,6 +7642,32 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       ht_prevX = px;
       ht_prevY = py;
       ht_setLabel('ROTATE');
+    }
+
+    // ── MediaPipe Tasks HandLandmarker (2023 model, GPU delegate) ──────────
+    // Markedly more robust to lighting/background than the legacy @0.4
+    // solution. Loaded dynamically from vendor/; on ANY failure the legacy
+    // Pose→crop→Hands pipeline stays in charge (tasksLandmarker stays null).
+    const USE_TASKS_API = new URLSearchParams(location.search).get('legacy') !== '1';
+    // Self-tracking zoom+normalize for the Tasks path (?crop=0 disables):
+    // last frame's landmarks → next frame's crop region.
+    const TASKS_CROP = new URLSearchParams(location.search).get('crop') !== '0';
+    let tasksCropRegion = null; // {x,y,w,h} in source px, EMA-smoothed enhance region
+    let tasksLandmarker = null;
+    async function ht_initTasks() {
+      const vision = await import('./vendor/mediapipe/tasks-vision/vision_bundle.mjs');
+      const fileset = await vision.FilesetResolver.forVisionTasks('vendor/mediapipe/tasks-vision/wasm');
+      return vision.HandLandmarker.createFromOptions(fileset, {
+        baseOptions: {
+          modelAssetPath: 'vendor/mediapipe/tasks-vision/hand_landmarker.task',
+          delegate: 'GPU',   // internally falls back to CPU if WebGL is unavailable
+        },
+        runningMode: 'VIDEO',
+        numHands: 2,
+        minHandDetectionConfidence: 0.5,
+        minHandPresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+      });
     }
 
     function ht_init() {
@@ -7163,10 +7722,17 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const HT_EQ_CLIP = 2.5;          // histogram clip factor (CLAHE-style)
       const _eqHist = new Uint32Array(256);
       const _eqLut = new Uint8Array(256);
-      function ht_equalizeCrop() {
-        const img = cropCtx.getImageData(0, 0, CROP_SZ, CROP_SZ);
+      // Generalized: equalize an arbitrary region of a 2d context in place.
+      function ht_equalizeRegion(ctx2d, rx, ry, rw, rh) {
+        const img = ctx2d.getImageData(rx, ry, rw, rh);
         const d = img.data;
-        const n = CROP_SZ * CROP_SZ;
+        const n = rw * rh;
+        return ht_equalizeImage(img, d, n, ctx2d, rx, ry);
+      }
+      function ht_equalizeCrop() {
+        return ht_equalizeRegion(cropCtx, 0, 0, CROP_SZ, CROP_SZ);
+      }
+      function ht_equalizeImage(img, d, n, outCtx, outX, outY) {
         _eqHist.fill(0);
         let sum = 0, sum2 = 0;
         for (let i = 0; i < d.length; i += 4) {
@@ -7200,7 +7766,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           d[i + 1] = Math.min(255, d[i + 1] * g);
           d[i + 2] = Math.min(255, d[i + 2] * g);
         }
-        cropCtx.putImageData(img, 0, 0);
+        outCtx.putImageData(img, outX, outY);
       }
 
       // Returns the (possibly filtered) frame to feed MediaPipe.
@@ -7381,7 +7947,61 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           try {
             const src = ht_prepFrame();    // bright-background compensation
             _lastFrameSrc = src;
-            if (USE_POSE_CROP) {
+            if (tasksLandmarker) {
+              // Tasks path: modern detector, GPU delegate — with LOCAL
+              // NORMALIZE (no zoom): the previous frame's landmarks give the
+              // hand region and we CLAHE-equalize that region IN PLACE on the
+              // full frame. The input geometry never changes — feeding actual
+              // crops alternated with full frames broke the VIDEO-mode
+              // tracker (the scene "teleported") and silently dropped the
+              // second hand. ?crop=0 disables the enhancement (A/B test).
+              // try/catch: a single bad frame must not kill the loop.
+              try {
+                let inputEl = src;
+                if (TASKS_CROP && tasksCropRegion) {
+                  if (src !== preCanvas) preCtx.drawImage(src, 0, 0, CAM_W, CAM_H);
+                  const r = tasksCropRegion;
+                  ht_equalizeRegion(preCtx,
+                    Math.max(0, Math.round(r.x)), Math.max(0, Math.round(r.y)),
+                    Math.min(CAM_W, Math.round(r.w)), Math.min(CAM_H, Math.round(r.h)));
+                  inputEl = preCanvas;
+                }
+                const res = tasksLandmarker.detectForVideo(inputEl, performance.now());
+                const lms = res.landmarks || [];
+                // next-frame enhance region = union bbox, squared + margin
+                if (lms.length) {
+                  let minX = 1, minY = 1, maxX = 0, maxY = 0;
+                  for (const lm of lms) for (const p of lm) {
+                    if (p.x < minX) minX = p.x;
+                    if (p.x > maxX) maxX = p.x;
+                    if (p.y < minY) minY = p.y;
+                    if (p.y > maxY) maxY = p.y;
+                  }
+                  const ccx = (minX + maxX) / 2 * CAM_W;
+                  const ccy = (minY + maxY) / 2 * CAM_H;
+                  const side = Math.min(CAM_H,
+                    Math.max(96, Math.max((maxX - minX) * CAM_W, (maxY - minY) * CAM_H) * 1.9));
+                  const raw = {
+                    x: Math.max(0, Math.min(CAM_W - side, ccx - side / 2)),
+                    y: Math.max(0, Math.min(CAM_H - side, ccy - side / 2)),
+                    w: side, h: side,
+                  };
+                  tasksCropRegion = tasksCropRegion ? {
+                    x: CROP_EMA * raw.x + (1 - CROP_EMA) * tasksCropRegion.x,
+                    y: CROP_EMA * raw.y + (1 - CROP_EMA) * tasksCropRegion.y,
+                    w: CROP_EMA * raw.w + (1 - CROP_EMA) * tasksCropRegion.w,
+                    h: CROP_EMA * raw.h + (1 - CROP_EMA) * tasksCropRegion.h,
+                  } : raw;
+                } else {
+                  tasksCropRegion = null; // lost → full-frame next frame
+                }
+                activeCrops = null;
+                ht_onResults({
+                  multiHandLandmarks: lms,
+                  multiHandedness: (res.handednesses || []).map(h => ({ score: (h && h[0] && h[0].score) || 1 })),
+                });
+              } catch (e) { tasksCropRegion = null; /* skip frame */ }
+            } else if (USE_POSE_CROP) {
               await mpPose.send({ image: src });
             } else {
               activeCrops = null;          // full-frame: landmarks need no remap
@@ -7392,6 +8012,17 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         width: CAM_W,
         height: CAM_H
       });
+      // Kick off the Tasks landmarker load; the legacy pipeline serves frames
+      // until it resolves, then the camera loop switches over seamlessly.
+      if (USE_TASKS_API) {
+        ht_initTasks().then(lm => {
+          tasksLandmarker = lm;
+          log('[ht_init] Tasks HandLandmarker active (GPU delegate)');
+        }).catch(err => {
+          console.warn('[ht_init] Tasks API failed — staying on legacy pipeline:', err);
+        });
+      }
+
       try {
         cam.start();
         log('[ht_init] Camera started successfully');
@@ -7453,10 +8084,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     fpsBadge.style.cssText = 'position:fixed;bottom:8px;right:80px;font:11px var(--mono);color:var(--text-dim);opacity:0.5;z-index:99;pointer-events:none;';
     document.body.appendChild(fpsBadge);
 
-    const qualityLabel = document.createElement('div');
-    qualityLabel.className = 'quality-reduced-label';
-    qualityLabel.textContent = '⚡ quality reduced';
-    document.body.appendChild(qualityLabel);
+    // (quality-reduced badge removed — adaptive quality still works silently;
+    // all querySelector('.quality-reduced-label') callers are null-guarded)
 
     })(); }); // end main() + DOMContentLoaded
 
@@ -7493,7 +8122,6 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   <div id="ht-container">
     <canvas id="ht-canvas" width="320" height="180"></canvas>
     <div id="ht-gesture-label">WAITING FOR CAMERA...</div>
-    <div id="ht-hint">PALM → ROTATE<br>POINT → SELECT (HOLD)<br>PEACE ✌️ → RESET<br>2 HANDS → ZOOM<br>FIST (1s) → PAUSE</div>
     <div id="ht-paused-badge" class="ht-paused-badge">PAUSED</div>
     <div id="ht-pause-hint" class="ht-pause-hint"></div>
   </div>
