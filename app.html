@@ -5042,6 +5042,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // ?perf=1 forces perf mode on small graphs (pick-precision testing);
     // ?perf=0 forces the normal path.
     const PERF_OVERRIDE = new URLSearchParams(location.search).get('perf');
+    // ?sim=1 (EXPERIMENTAL): after building the perf scene, relax the layout
+    // LIVE with the WebGPU compute force sim (GPUForceSimulation) for a fixed
+    // number of ticks, then freeze. Chrome + WebGPU only; silently skipped
+    // elsewhere.
+    const PERF_SIM = new URLSearchParams(location.search).get('sim') === '1';
 
     function hasBakedLayout(nodes) {
       if (!nodes.length) return false;
@@ -5376,6 +5381,64 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       colAttr.needsUpdate = true;
     }
 
+    // EXPERIMENTAL (?sim=1): live GPU relax of the perf-mode layout. Acquires
+    // its own WebGPU device (the global gpuAvailable stays false — it gates
+    // unrelated dormant paths), runs the existing GPUForceSimulation for a
+    // bounded number of ticks streaming positions into the instanced buffers,
+    // then disposes. Uses the module-level gpuSim var so initGraph teardown
+    // kills it on reload.
+    async function perfRunLiveSim(nodes, edges) {
+      if (!('gpu' in navigator)) { setBootStage('WEBGPU NOT AVAILABLE', 'live sim skipped'); return; }
+      let device;
+      try {
+        const adapter = await navigator.gpu.requestAdapter();
+        device = await adapter.requestDevice();
+      } catch (e) { console.warn('[perfSim] no WebGPU device:', e); return; }
+      if (!perf) return; // graph got torn down while we awaited
+      gpuSim = new GPUForceSimulation(device, nodes, edges, currentLayout, SCALE);
+      gpuSim.setChargeStrength(-6);
+      gpuSim.setLinkStrength(0.015, 60);
+      const m4 = new THREE.Matrix4();
+      const MAX_TICKS = 240;
+      let ticks = 0;
+      setBootStage('LIVE GPU SIM…', 'relaxing layout');
+      const loop = () => {
+        if (!gpuSim || gpuSim._disposed || !perf || ticks >= MAX_TICKS) {
+          if (gpuSim) { gpuSim.dispose(); gpuSim = null; }
+          if (perf) setBootStage(`LIVE SIM SETTLED // ${ticks} TICKS`, '');
+          return;
+        }
+        gpuSim.tick().then(() => {
+          if (!gpuSim || !perf) return;
+          ticks++;
+          perf.positions.set(gpuSim.positions.subarray(0, perf.positions.length));
+          for (let i = 0; i < perf.nodes.length; i++) {
+            const s = perf.scales[i] || 0.0001;
+            const x = perf.positions[i * 3], y = perf.positions[i * 3 + 1], z = perf.positions[i * 3 + 2];
+            m4.makeScale(s, s, s).setPosition(x, y, z);
+            perf.mesh.setMatrixAt(i, m4);
+            // keep node records in sync (picking + click camera-fly)
+            perf.nodes[i].x = x; perf.nodes[i].y = y; perf.nodes[i].z = z;
+          }
+          perf.mesh.instanceMatrix.needsUpdate = true;
+          for (let i = 0; i < perf.edgeSrc.length; i++) {
+            const si = perf.edgeSrc[i], ti = perf.edgeDst[i];
+            if (si < 0 || ti < 0) continue;
+            for (let k = 0; k < 3; k++) {
+              perf.linePos[i * 6 + k] = perf.positions[si * 3 + k];
+              perf.linePos[i * 6 + 3 + k] = perf.positions[ti * 3 + k];
+            }
+          }
+          perf.lineGeo.getAttribute('position').needsUpdate = true;
+          requestAnimationFrame(loop);
+        }).catch(e => {
+          console.warn('[perfSim] tick error:', e);
+          if (gpuSim) { gpuSim.dispose(); gpuSim = null; }
+        });
+      };
+      requestAnimationFrame(loop);
+    }
+
     // ── initGraph ──
 
     async function initGraph(nodes, edges) {
@@ -5649,6 +5712,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       if (perfMode) {
         buildPerfScene(nodes, edges);
         initPerfPicking();
+        if (PERF_SIM) perfRunLiveSim(nodes, edges); // fire-and-forget, bounded
       }
 
       // Set initial camera to the "H" recenter position (zoom out more for large graphs)
