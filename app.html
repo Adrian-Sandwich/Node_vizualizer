@@ -4676,7 +4676,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u,
       if (tj >= params.nodeCount || tj == i) { continue; }
       let diff = pi - tile[k].xyz;
       let dist = max(length(diff), 0.1);
-      force -= normalize(diff) * params.chargeStrength / (dist * dist);
+      // NO normalize(): it returns NaN for coincident nodes (baked layouts
+      // round to 2 decimals, so exact collisions DO happen at 36k nodes) and
+      // one NaN infects every node through this all-pairs pass. diff/dist is
+      // safe: coincident pair → zero force.
+      force -= (diff / dist) * params.chargeStrength / (dist * dist);
     }
     workgroupBarrier();
   }
@@ -4705,7 +4709,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let diff = positions[tgt].xyz - positions[src].xyz;
   let dist = max(length(diff), 0.01);
   let displacement = dist - params.linkDistance;
-  let f = normalize(diff) * displacement * params.linkStrength;
+  // diff/dist instead of normalize(): coincident endpoints (possible after
+  // 2-decimal layout rounding) would produce NaN and poison the accumulator.
+  let f = (diff / dist) * displacement * params.linkStrength;
   let fi = vec3i(f * FP_SCALE);
   // Accumulate on source (positive direction)
   atomicAdd(&forceAccum[src * 3u + 0u], fi.x);
@@ -5426,6 +5432,16 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           if (!gpuSim || !perf) return;
           ticks++;
           perf.positions.set(gpuSim.positions.subarray(0, perf.positions.length));
+          if (DEBUG && (ticks === 1 || ticks % 60 === 0)) {
+            let bad = 0, r2max = 0;
+            for (let k = 0; k < perf.positions.length; k += 3) {
+              const x = perf.positions[k], y = perf.positions[k + 1], z = perf.positions[k + 2];
+              if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) { bad++; continue; }
+              const r2 = x * x + y * y + z * z;
+              if (r2 > r2max) r2max = r2;
+            }
+            log(`[perfSim] tick=${ticks} nonfinite=${bad} maxR=${Math.sqrt(r2max).toFixed(1)}`);
+          }
           for (let i = 0; i < perf.nodes.length; i++) {
             const s = perf.scales[i] || 0.0001;
             const x = perf.positions[i * 3], y = perf.positions[i * 3 + 1], z = perf.positions[i * 3 + 2];
