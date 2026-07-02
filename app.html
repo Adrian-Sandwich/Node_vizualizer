@@ -6583,6 +6583,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       { id:'pinch', icon:'🤏', verb:'SELECCIONAR', desc:'Con el cursor sobre un nodo, junta índice y pulgar (pinch): selección instantánea, sin esperar.' },
       { id:'zoom',  icon:'🤲', verb:'ZOOM',       desc:'Levanta ambas manos frente a la cámara. Acércalas para zoom in, aléjalas para zoom out.' },
       { id:'peace', icon:'✌️', verb:'RESET',      desc:'Índice y medio extendidos (paz ✌️) y sostén: la vista regresa a la galaxia completa.' },
+      { id:'fist',  icon:'✊', verb:'PAUSAR',     desc:'Cierra el puño y sostenlo ~1 segundo: el tracking se pausa y tu mano descansa. Repítelo para reanudar.' },
     ];
 
     // SVG hand illustrations for each onboarding step
@@ -6930,6 +6931,20 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           ob_fistFrames++;
           const pct = Math.min(1, ob_fistFrames / OB_FIST_FRAMES);
           fbEl.textContent = 'RESET [' + Math.round(pct * 100) + '%]';
+          if (ob_fistFrames >= OB_FIST_FRAMES) advanceObStep();
+        } else {
+          ob_fistFrames = 0;
+          fbEl.textContent = '';
+        }
+        return;
+      }
+
+      // ── Step 5 — fist: hold to pause ──────────────────────────────────
+      if (obStep === 5) {
+        if (gesture === 'fist') {
+          ob_fistFrames++;
+          const pct = Math.min(1, ob_fistFrames / OB_FIST_FRAMES);
+          fbEl.textContent = 'PAUSA [' + Math.round(pct * 100) + '%]';
           if (ob_fistFrames >= OB_FIST_FRAMES) advanceObStep();
         } else {
           ob_fistFrames = 0;
@@ -8164,6 +8179,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       <span class="ob-dot" data-i="2"></span>
       <span class="ob-dot" data-i="3"></span>
       <span class="ob-dot" data-i="4"></span>
+      <span class="ob-dot" data-i="5"></span>
     </div>
     <button id="ob-skip">SKIP</button>
   </div>
