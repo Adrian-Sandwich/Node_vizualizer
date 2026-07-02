@@ -7122,7 +7122,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       // ── Offscreen canvas for wrist crops ─────────────────────────────────
       const cropCanvas = document.createElement('canvas');
       cropCanvas.width = CROP_SZ; cropCanvas.height = CROP_SZ;
-      const cropCtx = cropCanvas.getContext('2d');
+      const cropCtx = cropCanvas.getContext('2d', { willReadFrequently: true });
 
       let smoothCrop = null;
       const CROP_EMA = 0.5;
@@ -7154,6 +7154,55 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
                      : 'none';
         } catch (e) { _preFilter = 'none'; }
       }
+      // ── Contrast-limited histogram equalization of the wrist crop ────────
+      // The crop IS the hand's local region: expanding its histogram to full
+      // range is software "spot metering" — a hand underexposed against a
+      // bright background regains contrast before Hands sees it. Contrast
+      // limiting (clip) keeps noise from blowing up; a gate skips crops that
+      // are already well exposed.
+      const HT_EQ_CLIP = 2.5;          // histogram clip factor (CLAHE-style)
+      const _eqHist = new Uint32Array(256);
+      const _eqLut = new Uint8Array(256);
+      function ht_equalizeCrop() {
+        const img = cropCtx.getImageData(0, 0, CROP_SZ, CROP_SZ);
+        const d = img.data;
+        const n = CROP_SZ * CROP_SZ;
+        _eqHist.fill(0);
+        let sum = 0, sum2 = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          const y = (d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8;
+          _eqHist[y]++;
+          sum += y; sum2 += y * y;
+        }
+        const mean = sum / n;
+        const std = Math.sqrt(Math.max(0, sum2 / n - mean * mean));
+        // gate: only fix crops that are low-contrast or badly exposed
+        if (std > 52 && mean > 85 && mean < 165) return;
+        // clip histogram + redistribute excess (contrast limiting)
+        const clip = Math.max(1, (HT_EQ_CLIP * n / 256) | 0);
+        let excess = 0;
+        for (let b = 0; b < 256; b++) {
+          if (_eqHist[b] > clip) { excess += _eqHist[b] - clip; _eqHist[b] = clip; }
+        }
+        const add = excess / 256;
+        let cum = 0;
+        for (let b = 0; b < 256; b++) {
+          cum += _eqHist[b] + add;
+          _eqLut[b] = Math.min(255, Math.round(cum * 255 / n));
+        }
+        // per-pixel luminance gain (preserves hue)
+        for (let i = 0; i < d.length; i += 4) {
+          const y = (d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8;
+          if (y === 0) continue;
+          const g = _eqLut[y] / y;
+          if (g === 1) continue;
+          d[i]     = Math.min(255, d[i] * g);
+          d[i + 1] = Math.min(255, d[i + 1] * g);
+          d[i + 2] = Math.min(255, d[i + 2] * g);
+        }
+        cropCtx.putImageData(img, 0, 0);
+      }
+
       // Returns the (possibly filtered) frame to feed MediaPipe.
       let _lastFrameSrc = null; // set per camera frame; crops must reuse it
       function ht_prepFrame() {
@@ -7301,6 +7350,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
               cropRegion.x, cropRegion.y, cropRegion.w, cropRegion.h,
               0, 0, CROP_SZ, CROP_SZ
             );
+            ht_equalizeCrop(); // local contrast: software spot-metering on the hand region
             activeCrops = [cropRegion];
             await mpHands.send({ image: cropCanvas });
             return;
