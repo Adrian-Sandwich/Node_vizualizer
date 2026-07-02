@@ -1921,6 +1921,8 @@
         _vid:      n.vid     || n.id,
         _tooltip:  n.tooltip || '',
         size:      n.size    || 10,
+        // baked layout coords from graph_layout.py (may be undefined)
+        _x: n.x, _y: n.y, _z: n.z,
         ...n.props,
       }));
 
@@ -1970,6 +1972,8 @@
         filename: '',
         is_medoid: 0,
         is_llm_center: 0,
+        // baked layout coords — 3d-force-graph treats x/y/z as initial positions
+        ...(Number.isFinite(n._x) ? { x: n._x, y: n._y, z: n._z } : {}),
       }));
 
       const edges = edgesArr.map(e => ({
@@ -2033,8 +2037,10 @@
             vid: n._vid,
             size: n.size || 10,
             tooltip: n._tooltip || '',
+            // round-trip baked layout coords so EXPORT keeps the layout
+            ...(Number.isFinite(n._x) ? { x: n._x, y: n._y, z: n._z } : {}),
             props: Object.fromEntries(Object.entries(n).filter(([k]) =>
-              !['id','label','_tag','_domain','_vid','_tooltip','size'].includes(k)))
+              !['id','label','_tag','_domain','_vid','_tooltip','size','_x','_y','_z'].includes(k)))
           })),
           edges: parsed.edgesArr.map(e => ({
             from: e.from,
@@ -2110,6 +2116,24 @@
       });
     } else {
       console.error('[INIT] graph-file-input not found in DOM');
+    }
+
+    // ?graph=<url> — auto-load a graph over HTTP, skipping the file picker.
+    // Handy for direct links (`app.html?graph=graphs/foo.kgraph.json`) and for
+    // automated testing. loadExternalGraph only needs an object with .text().
+    const _autoGraphUrl = new URLSearchParams(location.search).get('graph');
+    if (_autoGraphUrl) {
+      (async () => {
+        try {
+          const resp = await fetch(_autoGraphUrl);
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          const text = await resp.text();
+          await loadExternalGraph({ text: async () => text });
+        } catch (err) {
+          console.error('[autoload]', err);
+          setupStatus.textContent = 'AUTOLOAD ERROR: ' + err.message.toUpperCase();
+        }
+      })();
     }
 
     // Load from cache (fallback button — no folder match needed)
@@ -3427,6 +3451,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
     let nodeRefreshTimer = null;
 
     function scheduleNodeRefresh() {
+      if (perfMode) return; // instanced scene doesn't use per-node objects
       clearTimeout(nodeRefreshTimer);
       nodeRefreshTimer = setTimeout(() => {
         if (!Graph) return;
@@ -3441,6 +3466,11 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
 
     function refreshLinks() {
       if (!Graph) return;
+      if (perfMode && perf) {
+        // the LINK ALPHA slider drives the single LineSegments material
+        perf.lineMat.opacity = VFX.linkAlpha.val * PERF_EDGE_ALPHA_SCALE;
+        return;
+      }
       Graph
         .linkColor(link => getLinkColor(link))
         .linkWidth(link => getLinkWidth(link))
@@ -3948,10 +3978,14 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
           hoverBox.style.left = (screenPos.x + 20) + 'px';
           hoverBox.style.top = (screenPos.y - 20) + 'px';
         }
-        // hoverBox.classList.add('visible');  // Disabled: using custom tooltip instead
+        // Perf mode has no built-in nodeLabel tooltip (graphData is empty), so
+        // the hover box IS the tooltip there. Normal path keeps it hidden.
+        if (perfMode) hoverBox.classList.add('visible');
       } else {
         hoverBox.classList.remove('visible');
       }
+
+      if (perfMode) return; // instance scale-up handled by initPerfPicking; no global dim at 365k edges
 
       if (Graph) {
         const { neighbors1, neighbors2 } = node
@@ -3992,16 +4026,20 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       dcNavStack.length = 0;
       showDetailCard(node);
 
-      // Selected node highlighted, neighbors slightly visible, rest normal
-      const { neighbors1 } = getNeighborDepths(node);
-      Graph.graphData().nodes.forEach(n => {
-        if (n === node)                  updateNodeAppearance(n, 'selected');
-        else if (neighbors1.has(n.id))   updateNodeAppearance(n, 'sel-neighbor');
-        else                             updateNodeAppearance(n, 'sel-rest');
-      });
+      if (perfMode) {
+        perfApplyHighlight();
+      } else {
+        // Selected node highlighted, neighbors slightly visible, rest normal
+        const { neighbors1 } = getNeighborDepths(node);
+        Graph.graphData().nodes.forEach(n => {
+          if (n === node)                  updateNodeAppearance(n, 'selected');
+          else if (neighbors1.has(n.id))   updateNodeAppearance(n, 'sel-neighbor');
+          else                             updateNodeAppearance(n, 'sel-rest');
+        });
 
-      Graph.linkColor(Graph.linkColor())
-           .linkWidth(Graph.linkWidth());
+        Graph.linkColor(Graph.linkColor())
+             .linkWidth(Graph.linkWidth());
+      }
 
       // Focus camera: approach from current direction, stop 700 units from node
       const distance = 700;
@@ -4402,6 +4440,9 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       selectedNode = null;
       dcNavStack.length = 0;
       dcMgHitAreas = [];
+      // Perf mode: node/edge colors live in instanced buffers — repaint them
+      // or the neighbor-dim from the previous selection sticks forever.
+      if (perfMode) perfApplyHighlight();
       if (Graph) {
         Graph.graphData().nodes.forEach(n => updateNodeAppearance(n, 'normal'));
         Graph.linkOpacity(1.0);
@@ -4546,8 +4587,9 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         e.preventDefault();
         dcNavigateBack();
       } else if (key === 'h' && Graph) {
-        // H: reset camera
-        Graph.cameraPosition({ x: 0, y: 0, z: SCALE * 4 }, { x: 0, y: 0, z: 0 }, 1000);
+        // H: reset camera (perf mode frames the instanced scene's bounds)
+        const hz = perfMode ? perfBoundingRadius() * 1.9 : SCALE * 4;
+        Graph.cameraPosition({ x: 0, y: 0, z: hz }, { x: 0, y: 0, z: 0 }, 1000);
       } else if (key === 'l' && Graph) {
         // L: toggle labels
         labelsVisible = !labelsVisible;
@@ -4975,6 +5017,365 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       }
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // PERF MODE — instanced rendering for huge graphs (36k nodes / 365k edges)
+    //
+    // Above the thresholds, the normal 3d-force-graph pipeline dies: one
+    // THREE.Line per edge (365k draw calls) + 5 objects per node + live d3
+    // physics. Perf mode instead: layout precomputed offline (graph_layout.py
+    // bakes x,y,z), 3d-force-graph gets EMPTY graphData and serves only as
+    // stage (scene, camera, controls, bloom), and we render everything as:
+    //   · 1 THREE.InstancedMesh   — all node spheres (per-instance color/scale)
+    //   · 1 THREE.LineSegments    — all edges in one buffer (vertex colors)
+    // Picking is a linear scan over a Float32Array of positions (~36k
+    // multiply-adds, <1ms) — NOT raycaster.intersectObject(InstancedMesh),
+    // which in three r128 does a Matrix4 inversion + triangle test per
+    // instance and would freeze per mousemove.
+    // ═══════════════════════════════════════════════════════════════════════
+    let perfMode = false;
+    let perf = null; // { mesh, lines, geos/mats, positions, baseColors, scales, edgeSrc, edgeDst, nodes, idToIndex, handlers, hoverIdx }
+    const PERF_NODE_THRESHOLD = 8000;
+    const PERF_EDGE_THRESHOLD = 60000;
+    // Edge alpha in perf mode = slider value × this. At 100k+ overlapping
+    // segments full slider alpha buries the nodes in spaghetti.
+    const PERF_EDGE_ALPHA_SCALE = 0.35;
+    // ?perf=1 forces perf mode on small graphs (pick-precision testing);
+    // ?perf=0 forces the normal path.
+    const PERF_OVERRIDE = new URLSearchParams(location.search).get('perf');
+
+    function hasBakedLayout(nodes) {
+      if (!nodes.length) return false;
+      let ok = 0;
+      for (const n of nodes) {
+        if (Number.isFinite(n.x) && Number.isFinite(n.y) && Number.isFinite(n.z)) ok++;
+      }
+      return ok >= nodes.length * 0.95;
+    }
+
+    // JS twin of graph_layout.py --algo radial (keep in sync): degree-based
+    // galaxy — hubs at the core, leaves on outer orbits, domains in angular
+    // sectors, directions refined toward neighbors, disc-flattened.
+    // Runs in-browser for ANY graph without baked coords (O(iters·E) ≈
+    // instant even at 365k edges) — the system arranges the graph by itself;
+    // graph_layout.py is only an optional upgrade (DrL organic layout).
+    function computeFallbackLayout(nodes, edges, radius = 1400) {
+      const fib = (count, r, out) => {
+        const golden = Math.PI * (3 - Math.sqrt(5));
+        for (let i = 0; i < count; i++) {
+          const y = 1 - (2 * i + 1) / count;
+          const rr = Math.sqrt(Math.max(0, 1 - y * y));
+          const th = golden * i;
+          out.push([Math.cos(th) * rr * r, y * r, Math.sin(th) * rr * r]);
+        }
+        return out;
+      };
+      const n = nodes.length;
+      const idx = new Map();
+      nodes.forEach((node, i) => idx.set(node.id, i));
+
+      // degree + edge pairs (edges here use source/target ids)
+      const deg = new Float64Array(n);
+      const pairs = [];
+      for (const e of (edges || [])) {
+        const a = idx.get(typeof e.source === 'object' ? e.source.id : e.source);
+        const b = idx.get(typeof e.target === 'object' ? e.target.id : e.target);
+        if (a == null || b == null) continue;
+        deg[a]++; deg[b]++;
+        pairs.push(a, b);
+      }
+      let maxDeg = 1;
+      for (let i = 0; i < n; i++) if (deg[i] > maxDeg) maxDeg = deg[i];
+      const rMin = radius * 0.06, rMax = radius;
+      const logMax = Math.log1p(maxDeg);
+      const radii = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        radii[i] = rMin + (1 - Math.log1p(deg[i]) / logMax) * (rMax - rMin);
+      }
+
+      // initial directions: domain sectors, fibonacci spread inside each
+      const groups = new Map();
+      nodes.forEach((node, i) => {
+        const k = node._domain || 'default';
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(i);
+      });
+      const keys = [...groups.keys()].sort();
+      const centers = keys.length > 1 ? fib(keys.length, 1.0, []) : [[0, 1, 0]];
+      const dirs = new Float64Array(n * 3);
+      keys.forEach((k, gi) => {
+        const [cx, cy, cz] = centers[gi];
+        const members = groups.get(k);
+        const pts = fib(members.length, 1.0, []);
+        members.forEach((mi, j) => {
+          const vx = cx + 0.45 * pts[j][0], vy = cy + 0.45 * pts[j][1], vz = cz + 0.45 * pts[j][2];
+          const norm = Math.sqrt(vx * vx + vy * vy + vz * vz) || 1;
+          dirs[mi * 3] = vx / norm; dirs[mi * 3 + 1] = vy / norm; dirs[mi * 3 + 2] = vz / norm;
+        });
+      });
+
+      // refinement sweeps: pull each node toward its neighbors' mean direction
+      const acc = new Float64Array(n * 3);
+      for (let it = 0; it < 3; it++) {
+        for (let i = 0; i < n * 3; i++) acc[i] = dirs[i] * 0.5; // self-weight
+        for (let p = 0; p < pairs.length; p += 2) {
+          const a = pairs[p] * 3, b = pairs[p + 1] * 3;
+          acc[a] += dirs[b]; acc[a + 1] += dirs[b + 1]; acc[a + 2] += dirs[b + 2];
+          acc[b] += dirs[a]; acc[b + 1] += dirs[a + 1]; acc[b + 2] += dirs[a + 2];
+        }
+        for (let i = 0; i < n; i++) {
+          const x = acc[i * 3], y = acc[i * 3 + 1], z = acc[i * 3 + 2];
+          const norm = Math.sqrt(x * x + y * y + z * z);
+          if (norm > 1e-9) {
+            dirs[i * 3] = x / norm; dirs[i * 3 + 1] = y / norm; dirs[i * 3 + 2] = z / norm;
+          }
+        }
+      }
+
+      for (let i = 0; i < n; i++) {
+        nodes[i].x = dirs[i * 3] * radii[i];
+        nodes[i].y = dirs[i * 3 + 1] * radii[i] * 0.45; // flatten → disc
+        nodes[i].z = dirs[i * 3 + 2] * radii[i];
+      }
+    }
+
+    function perfBoundingRadius() {
+      if (!perf) return SCALE * 4;
+      let max2 = 0;
+      const p = perf.positions;
+      for (let i = 0; i < p.length; i += 3) {
+        const d2 = p[i] * p[i] + p[i + 1] * p[i + 1] + p[i + 2] * p[i + 2];
+        if (d2 > max2) max2 = d2;
+      }
+      return Math.sqrt(max2) || SCALE * 4;
+    }
+
+    function buildPerfScene(nodes, edges) {
+      const n = nodes.length;
+      const sphereGeo = new THREE.SphereGeometry(1, 8, 6);
+      const nodeMat = new THREE.MeshBasicMaterial();
+      const mesh = new THREE.InstancedMesh(sphereGeo, nodeMat, n);
+      // r128 doesn't grow bounds per instance — without this the whole mesh
+      // vanishes once the unit sphere leaves the frustum.
+      mesh.frustumCulled = false;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+
+      const m4 = new THREE.Matrix4();
+      const col = new THREE.Color();
+      const positions = new Float32Array(n * 3);
+      const baseColors = new Float32Array(n * 3);
+      const scales = new Float32Array(n);
+      const idToIndex = new Map();
+
+      nodes.forEach((node, i) => {
+        idToIndex.set(node.id, i);
+        const x = node.x || 0, y = node.y || 0, z = node.z || 0;
+        positions[i * 3] = x; positions[i * 3 + 1] = y; positions[i * 3 + 2] = z;
+        const s = node.is_medoid ? 5 : 3;
+        scales[i] = s;
+        m4.makeScale(s, s, s).setPosition(x, y, z);
+        mesh.setMatrixAt(i, m4);
+        col.set(CLUSTER_COLORS[node.cluster_id % CLUSTER_COLORS.length] || '#888888');
+        mesh.setColorAt(i, col);
+        baseColors[i * 3] = col.r; baseColors[i * 3 + 1] = col.g; baseColors[i * 3 + 2] = col.b;
+      });
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+
+      const e = edges.length;
+      const linePos = new Float32Array(e * 6);
+      const lineCol = new Uint8Array(e * 6);
+      const edgeSrc = new Int32Array(e);
+      const edgeDst = new Int32Array(e);
+      for (let i = 0; i < e; i++) {
+        const si = idToIndex.get(edges[i].source);
+        const ti = idToIndex.get(edges[i].target);
+        edgeSrc[i] = si ?? -1; edgeDst[i] = ti ?? -1;
+        if (si == null || ti == null) continue; // both verts stay at origin, zero-length
+        linePos[i * 6]     = positions[si * 3];
+        linePos[i * 6 + 1] = positions[si * 3 + 1];
+        linePos[i * 6 + 2] = positions[si * 3 + 2];
+        linePos[i * 6 + 3] = positions[ti * 3];
+        linePos[i * 6 + 4] = positions[ti * 3 + 1];
+        linePos[i * 6 + 5] = positions[ti * 3 + 2];
+        for (let v = 0; v < 2; v++) {
+          const ni = v === 0 ? si : ti;
+          lineCol[i * 6 + v * 3]     = baseColors[ni * 3] * 255;
+          lineCol[i * 6 + v * 3 + 1] = baseColors[ni * 3 + 1] * 255;
+          lineCol[i * 6 + v * 3 + 2] = baseColors[ni * 3 + 2] * 255;
+        }
+      }
+      const lineGeo = new THREE.BufferGeometry();
+      lineGeo.setAttribute('position', new THREE.BufferAttribute(linePos, 3));
+      lineGeo.setAttribute('color', new THREE.BufferAttribute(lineCol, 3, true));
+      const lineMat = new THREE.LineBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: VFX.linkAlpha.val * PERF_EDGE_ALPHA_SCALE,
+        depthWrite: false, // 365k translucent segments — avoid z-fighting churn
+      });
+      const lines = new THREE.LineSegments(lineGeo, lineMat);
+      lines.frustumCulled = false;
+
+      Graph.scene().add(mesh);
+      Graph.scene().add(lines);
+      perf = { mesh, lines, sphereGeo, nodeMat, lineGeo, lineMat,
+               positions, baseColors, scales, linePos, lineCol,
+               edgeSrc, edgeDst, nodes, idToIndex, handlers: {}, hoverIdx: -1 };
+    }
+
+    function disposePerfScene() {
+      if (!perf) { perfMode = false; return; }
+      try {
+        const scene = Graph && Graph.scene && Graph.scene();
+        if (scene) { scene.remove(perf.mesh); scene.remove(perf.lines); }
+      } catch (e) { /* Graph already destroyed */ }
+      perf.sphereGeo.dispose(); perf.nodeMat.dispose();
+      perf.lineGeo.dispose(); perf.lineMat.dispose();
+      // handlers live on the #graph div, which SURVIVES Graph._destructor() —
+      // they must be removed here or they stack across reloads.
+      const el = document.getElementById('graph');
+      if (el) for (const [ev, fn] of Object.entries(perf.handlers)) el.removeEventListener(ev, fn);
+      perf = null; perfMode = false;
+    }
+
+    const _perfRaycaster = new THREE.Raycaster();
+    const _perfNdc = new THREE.Vector2();
+    function perfPickNode(clientX, clientY) {
+      if (!perf || !Graph) return null;
+      const el = document.getElementById('graph');
+      const rect = el.getBoundingClientRect();
+      _perfNdc.set(((clientX - rect.left) / rect.width) * 2 - 1,
+                   -((clientY - rect.top) / rect.height) * 2 + 1);
+      const cam = Graph.camera();
+      _perfRaycaster.setFromCamera(_perfNdc, cam);
+      const ro = _perfRaycaster.ray.origin, rd = _perfRaycaster.ray.direction;
+      // world-units per screen-pixel at distance t: 2·t·tan(fov/2)/heightPx
+      const pxWorld = 2 * Math.tan((cam.fov * Math.PI / 180) / 2) / rect.height;
+      const TOL_PX = 8;
+      const p = perf.positions;
+      let best = -1, bestT = Infinity;
+      for (let i = 0; i < perf.nodes.length; i++) {
+        if (perf.scales[i] === 0) continue; // hidden by tag filter
+        const dx = p[i * 3] - ro.x, dy = p[i * 3 + 1] - ro.y, dz = p[i * 3 + 2] - ro.z;
+        const t = dx * rd.x + dy * rd.y + dz * rd.z;   // distance along ray
+        if (t < 0 || t >= bestT) continue;
+        const px = dx - t * rd.x, py = dy - t * rd.y, pz = dz - t * rd.z;
+        const r = perf.scales[i] + TOL_PX * pxWorld * t;
+        if (px * px + py * py + pz * pz < r * r) { best = i; bestT = t; }
+      }
+      return best >= 0 ? perf.nodes[best] : null;
+    }
+
+    function perfSetInstanceScale(i, s) {
+      const m4 = new THREE.Matrix4();
+      const p = perf.positions;
+      m4.makeScale(s, s, s).setPosition(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
+      perf.mesh.setMatrixAt(i, m4);
+      perf.mesh.instanceMatrix.needsUpdate = true;
+    }
+
+    function initPerfPicking() {
+      const el = document.getElementById('graph');
+      let downX = 0, downY = 0, downT = 0;
+      let lastMove = 0;
+
+      const onDown = (ev) => { downX = ev.clientX; downY = ev.clientY; downT = performance.now(); };
+      const onUp = (ev) => {
+        // treat as click only if barely moved and quick — otherwise it was an
+        // OrbitControls drag.
+        const moved = Math.hypot(ev.clientX - downX, ev.clientY - downY);
+        if (moved > 5 || performance.now() - downT > 300) return;
+        const node = perfPickNode(ev.clientX, ev.clientY);
+        if (node) {
+          handleNodeClick(node);
+        } else {
+          handleBackgroundClick();
+        }
+        perfApplyHighlight();
+      };
+      const onMove = (ev) => {
+        const now = performance.now();
+        if (now - lastMove < 33) return; // ~30 Hz
+        lastMove = now;
+        const node = perfPickNode(ev.clientX, ev.clientY);
+        const idx = node ? perf.idToIndex.get(node.id) : -1;
+        if (idx === perf.hoverIdx) return;
+        // restore previous hover scale
+        if (perf.hoverIdx >= 0) perfSetInstanceScale(perf.hoverIdx, perf.scales[perf.hoverIdx]);
+        perf.hoverIdx = idx;
+        if (idx >= 0) perfSetInstanceScale(idx, perf.scales[idx] * 1.8);
+        el.style.cursor = node ? 'pointer' : 'default';
+        handleNodeHover(node || null);
+      };
+
+      el.addEventListener('pointerdown', onDown);
+      el.addEventListener('pointerup', onUp);
+      el.addEventListener('pointermove', onMove);
+      perf.handlers = { pointerdown: onDown, pointerup: onUp, pointermove: onMove };
+    }
+
+    // Single source of truth for node/edge colors in perf mode. Recomputes the
+    // full instanceColor + edge color buffers from {selectedNode, hiddenTags}.
+    // Runs on click/filter (~10ms for 36k/365k), NEVER per hover frame.
+    function perfApplyHighlight() {
+      if (!perf) return;
+      const nbrs = selectedNode ? (neighborSets[selectedNode.id] || new Set()) : null;
+      const selIdx = selectedNode ? perf.idToIndex.get(selectedNode.id) : -1;
+      const col = new THREE.Color();
+      const DIM = 0.82;
+
+      const nodeVisible = new Uint8Array(perf.nodes.length);
+      perf.nodes.forEach((node, i) => {
+        const hidden = hiddenTags.has(String(node.cluster_id));
+        nodeVisible[i] = hidden ? 0 : 1;
+        // scale: 0 hides; restore base otherwise (keeps hover scale coherent)
+        const baseS = node.is_medoid ? 5 : 3;
+        perf.scales[i] = hidden ? 0 : baseS;
+        perfSetInstanceScale(i, i === selIdx ? baseS * 2 : perf.scales[i]);
+
+        let r = perf.baseColors[i * 3], g = perf.baseColors[i * 3 + 1], b = perf.baseColors[i * 3 + 2];
+        if (nbrs && i !== selIdx && !nbrs.has(node.id)) {
+          r *= (1 - DIM); g *= (1 - DIM); b *= (1 - DIM);
+        }
+        col.setRGB(r, g, b);
+        perf.mesh.setColorAt(i, col);
+      });
+      if (perf.mesh.instanceColor) perf.mesh.instanceColor.needsUpdate = true;
+
+      // Edges: bright if incident to the selection, dimmed otherwise, collapsed
+      // to zero length if either endpoint is hidden (rasterizes nothing).
+      const e = perf.edgeSrc.length;
+      const pos = perf.lineGeo.getAttribute('position');
+      const colAttr = perf.lineGeo.getAttribute('color');
+      const p = perf.positions;
+      for (let i = 0; i < e; i++) {
+        const si = perf.edgeSrc[i], ti = perf.edgeDst[i];
+        if (si < 0 || ti < 0) continue;
+        const hidden = !nodeVisible[si] || !nodeVisible[ti];
+        if (hidden) {
+          // both vertices to the same point → zero-length segment
+          for (let k = 0; k < 3; k++) {
+            perf.linePos[i * 6 + k] = p[si * 3 + k];
+            perf.linePos[i * 6 + 3 + k] = p[si * 3 + k];
+          }
+        } else {
+          for (let k = 0; k < 3; k++) {
+            perf.linePos[i * 6 + k] = p[si * 3 + k];
+            perf.linePos[i * 6 + 3 + k] = p[ti * 3 + k];
+          }
+        }
+        const incident = selIdx >= 0 && (si === selIdx || ti === selIdx);
+        const f = (nbrs && !incident) ? (1 - DIM) : 1;
+        for (let v = 0; v < 2; v++) {
+          const ni = v === 0 ? si : ti;
+          perf.lineCol[i * 6 + v * 3]     = perf.baseColors[ni * 3] * 255 * f;
+          perf.lineCol[i * 6 + v * 3 + 1] = perf.baseColors[ni * 3 + 1] * 255 * f;
+          perf.lineCol[i * 6 + v * 3 + 2] = perf.baseColors[ni * 3 + 2] * 255 * f;
+        }
+      }
+      pos.needsUpdate = true;
+      colAttr.needsUpdate = true;
+    }
+
     // ── initGraph ──
 
     async function initGraph(nodes, edges) {
@@ -4990,11 +5391,25 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       if (gpuSim) { gpuSim.dispose(); gpuSim = null; }
       if (_labelRAF) { cancelAnimationFrame(_labelRAF); _labelRAF = null; }
       if (clusterLabelRAF) { cancelAnimationFrame(clusterLabelRAF); clusterLabelRAF = null; }
+      disposePerfScene(); // must run BEFORE Graph._destructor (uses Graph.scene())
       if (Graph && Graph._destructor) { try { Graph._destructor(); } catch (e) { console.warn('Graph teardown:', e); } }
       if (_css2dEl) { _css2dEl.remove(); _css2dEl = null; }
       if (_resizeHandler) { window.removeEventListener('resize', _resizeHandler); _resizeHandler = null; }
 
-      const links = edges.map(e => ({
+      // ── Perf-mode decision ─────────────────────────────────────────────────
+      perfMode = PERF_OVERRIDE === '1' ? true
+               : PERF_OVERRIDE === '0' ? false
+               : isExternalGraph && (nodes.length > PERF_NODE_THRESHOLD || edges.length > PERF_EDGE_THRESHOLD);
+      if (perfMode && !hasBakedLayout(nodes)) {
+        setBootStage('COMPUTING LAYOUT…', 'radial galaxy — bake with graph_layout.py --algo drl for organic layout');
+        computeFallbackLayout(nodes, edges);
+      }
+      // Small graph WITH baked layout → pin positions, skip physics entirely:
+      // pruned graphs processed by graph_layout.py load instantly.
+      const pinned = !perfMode && isExternalGraph && hasBakedLayout(nodes);
+      if (pinned) nodes.forEach(n => { n.fx = n.x; n.fy = n.y; n.fz = n.z; });
+
+      const links = perfMode ? [] : edges.map(e => ({
         source: e.source,
         target: e.target,
         label_forward: e.label_forward,
@@ -5003,16 +5418,18 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       }));
 
       // Build neighbor lookups for only the active topology's edges
+      // (perf mode included — feeds the detail panel and highlight)
       const activeEdges = edges.filter(e => e.topology === currentLayout);
       rebuildLookups(nodes, activeEdges);
 
       Graph = ForceGraph3D()
         (document.getElementById('graph'))
-        .graphData({ nodes, links })
+        .graphData(perfMode ? { nodes: [], links: [] } : { nodes, links })
         .backgroundColor(`rgba(${hexToRgb(VFX.bgColor.val)},${VFX.bgAlpha.val})`)
         .showNavInfo(false)
-        .warmupTicks(isExternalGraph ? 80 : 40)
-        .cooldownTicks(isExternalGraph ? 200 : Infinity)
+        .warmupTicks(perfMode || pinned ? 0 : (isExternalGraph ? 80 : 40))
+        .cooldownTicks(perfMode || pinned ? 0 : (isExternalGraph ? 200 : Infinity))
+        .enableNodeDrag(!perfMode)
         .nodeThreeObject(node => createNodeObject(node))
         .nodeThreeObjectExtend(false)
         .nodeLabel(node => buildNodeTooltip(node))
@@ -5041,10 +5458,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         })
         .onNodeClick(handleNodeClick)
         .onNodeHover(handleNodeHover)
-        .onBackgroundClick(handleBackgroundClick);
+        // In perf mode graphData is empty, so 3d-force-graph treats EVERY click
+        // as a background click — our picking handlers dispatch both cases.
+        .onBackgroundClick(perfMode ? (() => {}) : handleBackgroundClick);
 
-      // Force configuration (optimized for performance with large graphs)
-      if (isExternalGraph) {
+      // Force configuration (skipped in perf mode: layout is precomputed)
+      if (perfMode) {
+        // no forces — everything is static, rendered by the instanced scene
+      } else if (isExternalGraph) {
         // Reduced forces for faster stabilization on large graphs
         Graph.d3Force('charge').strength(-5); // reduced from -8
         Graph.d3Force('link').distance(50).strength(0.01); // reduced from 60, 0.02
@@ -5223,8 +5644,15 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         })();
       }
 
+      // Perf mode: build the instanced scene (after bloom so passes see it) and
+      // wire custom picking (graphData is empty — built-in raycast is blind).
+      if (perfMode) {
+        buildPerfScene(nodes, edges);
+        initPerfPicking();
+      }
+
       // Set initial camera to the "H" recenter position (zoom out more for large graphs)
-      Graph.cameraPosition({ x: 0, y: 0, z: SCALE * 4 }, { x: 0, y: 0, z: 0 });
+      Graph.cameraPosition({ x: 0, y: 0, z: perfMode ? perfBoundingRadius() * 1.9 : SCALE * 4 }, { x: 0, y: 0, z: 0 });
 
       // Pre-calculate optimal hand-tracking zoom based on graph size
       if (!ht_initialZoomCalculated && appState !== 'onboarding') {
@@ -5400,7 +5828,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         hiddenTags.add(clusterId);
       }
       // Update 3D node visibility
-      if (Graph) {
+      if (perfMode) {
+        perfApplyHighlight(); // hides instances (scale 0) + collapses their edges
+      } else if (Graph) {
         Graph.graphData().nodes.forEach(n => {
           const isHidden = hiddenTags.has(String(n.cluster_id));
           const sph = n.__sphereMat;
@@ -5424,14 +5854,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       document.getElementById('ip-tag-count').textContent = tagCount;
       document.getElementById('readout-tags').textContent = tagCount;
 
-      // Count nodes per cluster
+      // Count nodes per cluster (perf mode: graphData is empty — use the
+      // instanced node list instead)
       const clusterCounts = {};
-      if (Graph) {
-        Graph.graphData().nodes.forEach(n => {
-          const cid = String(n.cluster_id);
-          clusterCounts[cid] = (clusterCounts[cid] || 0) + 1;
-        });
-      }
+      const legendNodes = perfMode && perf ? perf.nodes : (Graph ? Graph.graphData().nodes : []);
+      legendNodes.forEach(n => {
+        const cid = String(n.cluster_id);
+        clusterCounts[cid] = (clusterCounts[cid] || 0) + 1;
+      });
 
       Object.entries(clusterNames).forEach(([id, name]) => {
         const color = CLUSTER_COLORS[id % CLUSTER_COLORS.length];
@@ -5985,10 +6415,27 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let ht_candidateFrames = 0;
     let ht_pointPrevFx = null;
     let ht_pointPrevFy = null;
-    const HT_STILL_POINT = 0.012;   // finger stillness threshold for click accumulation
-    const HT_CLICK_FRAMES   = 5;    // hold ~80ms to select (3x faster)
+    const HT_STILL_POINT = 0.012;   // finger stillness threshold (fist-hold reset uses it)
+    const HT_CLICK_FRAMES   = 5;    // legacy hold-to-select frames (superseded by dwell)
     const HT_FIST_FRAMES    = 6;    // hold ~100ms to reset (3x faster)
     const HT_HOVER_FRAMES   = 6;    // consecutive frames needed to commit hover change
+    // Point-select UX:
+    const HT_DWELL_FRAMES   = 12;   // hover the SAME node this long → select (no stillness needed)
+    const HT_DWELL_COOLDOWN = 18;   // frames before the same node can re-trigger after a select
+    const HT_HOVER_GRACE    = 8;    // frames hover survives after the finger drifts off the node
+    const HT_STICKY_FACTOR  = 0.6;  // a rival node must be this fraction closer to steal hover
+    const HT_PINCH_ENTER    = 0.32; // (indexTip↔thumbTip)/handSize below → pinch = instant select
+    const HT_PINCH_EXIT     = 0.45; // above → pinch released (hysteresis)
+    let ht_pinchActive = false;
+    let ht_hoverGraceFrames = 0;
+    // On-graph cursor that follows the fingertip while pointing
+    const ht_cursorEl = document.createElement('div');
+    ht_cursorEl.id = 'ht-cursor';
+    ht_cursorEl.style.cssText =
+      'position:fixed;width:22px;height:22px;border-radius:50%;pointer-events:none;' +
+      'z-index:9999;display:none;transform:translate(-50%,-50%);' +
+      'border:2px solid #ff5533;box-shadow:0 0 0 2px rgba(255,255,255,.85), 0 0 10px rgba(255,85,51,.5)';
+    document.body.appendChild(ht_cursorEl);
     const HT_RELEASE_FRAMES = 120;  // 2s without hand → re-enable mouse
     let ht_zoomCooldown     = 0;    // frames to ignore after zoom ends
     const HT_MIN_CONFIDENCE = 0.75; // minimum hand detection confidence threshold
@@ -6014,9 +6461,16 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     const HT_INERTIA_MIN = 0.0005;
     let ht_inertiaRAF = null;
 
-    // Fix 2 — Hysteresis for finger extension detection
+    // Fix 2 — Hysteresis for finger extension detection.
+    // Extension is measured by the bend angle at the PIP joint: cosine between
+    // the vectors PIP→MCP and PIP→TIP. Straight finger ≈ 180° (cos ≈ −0.95),
+    // curled ≈ 60–90° (cos ≈ 0…0.5) — a wide margin, rotation-invariant, and
+    // insensitive to hand size (the old y-only comparison broke with a
+    // sideways/rotated hand; a tip/wrist distance ratio proved too noisy).
+    // Slots: 0=index 1=middle 2=ring 3=pinky.
     const ht_extendedState = [false, false, false, false];
-    const HT_EXTEND_MARGIN = 0.025;
+    const HT_CURL_COS_ENTER = -0.60;  // cos below (straighter) → extended
+    const HT_CURL_COS_EXIT  = -0.35;  // cos above (more bent) → curled (hysteresis band)
 
     // Fix 3 — Gesture lock + debounce
     let ht_lastGesture = 'other';
@@ -6024,7 +6478,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let ht_pendFrames  = 0;
     let ht_lockFrames  = 0;
     const HT_GESTURE_DEBOUNCE = 2;
-    const HT_GESTURE_LOCK = 8;
+    const HT_GESTURE_LOCK = 5; // was 8 (~267ms deaf after transition); the rotation-invariant classifier is stable enough for a shorter lock
     // Onboarding parallel debounce state
     let ob_lastGesture = 'other';
     let ob_pendGesture = 'other';
@@ -6035,14 +6489,20 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let ht_wasTwoHands = false;
     let ob_wasTwoHands = false;
 
-    // Fix 5 — EMA smoothing of landmarks
-    const HT_EMA_ALPHA = 0.45;
+    // Fix 5 → One Euro filter smoothing of landmarks (replaces fixed-alpha EMA).
+    // Adaptive: heavy smoothing when the hand is still (kills jitter), light
+    // smoothing when it moves fast (kills lag). Standard interactive-tracking
+    // filter. Tunables:
+    const HT_OE_MIN_CUTOFF = 1.2;  // Hz — lower = smoother at rest
+    const HT_OE_BETA       = 0.02; // speed coefficient — higher = snappier when moving
+    const HT_OE_D_CUTOFF   = 1.0;  // Hz — derivative lowpass
     let ht_emaState = { lm: null };
     let ob_emaState = { lm: null };
 
     // Calculate optimal camera distance based on graph bounding box
     function calculateOptimalZoom() {
       if (!Graph) return SCALE * 4;
+      if (perfMode && perf) return Math.max(SCALE * 1.5, perfBoundingRadius() * 1.5);
       const nodes = Graph.graphData().nodes;
       if (!nodes || nodes.length === 0) return SCALE * 4;
 
@@ -6106,26 +6566,38 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       }
     }
 
-    function ht_isExtended(lm, tip, pip, fingerIdx) {
-      const diff = lm[pip].y - lm[tip].y;
+    function ht_pipCurlCos(lm, mcp, pip, tip) {
+      // cosine of the bend angle at the PIP joint (vectors PIP→MCP, PIP→TIP)
+      const ax = lm[mcp].x - lm[pip].x, ay = lm[mcp].y - lm[pip].y, az = (lm[mcp].z || 0) - (lm[pip].z || 0);
+      const bx = lm[tip].x - lm[pip].x, by = lm[tip].y - lm[pip].y, bz = (lm[tip].z || 0) - (lm[pip].z || 0);
+      const na = Math.sqrt(ax * ax + ay * ay + az * az) || 1e-6;
+      const nb = Math.sqrt(bx * bx + by * by + bz * bz) || 1e-6;
+      return (ax * bx + ay * by + az * bz) / (na * nb);
+    }
+
+    function ht_isExtended(lm, mcp, pip, tip, fingerIdx) {
+      const cos = ht_pipCurlCos(lm, mcp, pip, tip);
       if (ht_extendedState[fingerIdx]) {
-        if (diff < -HT_EXTEND_MARGIN) ht_extendedState[fingerIdx] = false;
+        if (cos > HT_CURL_COS_EXIT) ht_extendedState[fingerIdx] = false;
       } else {
-        if (diff > HT_EXTEND_MARGIN) ht_extendedState[fingerIdx] = true;
+        if (cos < HT_CURL_COS_ENTER) ht_extendedState[fingerIdx] = true;
       }
       return ht_extendedState[fingerIdx];
     }
 
     function ht_gesture(lm) {
-      const idx  = ht_isExtended(lm, 8,  6,  0);
-      const mid  = ht_isExtended(lm, 12, 10, 1);
-      const ring = ht_isExtended(lm, 16, 14, 2);
-      const pink = ht_isExtended(lm, 20, 18, 3);
+      const idx  = ht_isExtended(lm, 5,  6,  8,  0);
+      const mid  = ht_isExtended(lm, 9,  10, 12, 1);
+      const ring = ht_isExtended(lm, 13, 14, 16, 2);
+      const pink = ht_isExtended(lm, 17, 18, 20, 3);
       const n    = [idx, mid, ring, pink].filter(Boolean).length;
       if (n === 0)                        return 'fist';
-      if (idx && !mid && !ring && !pink)  return 'point';
-      if (idx && mid && !ring && !pink)   return 'peace';
       if (n >= 3)                         return 'palm';
+      if (idx && mid && !ring && !pink)   return 'peace';
+      // point tolerates ring/pinky noise: index up + middle down is enough.
+      // (Strict !ring && !pink kicked point out to 'other' on every flicker
+      // of the two fingers that don't matter for the gesture.)
+      if (idx && !mid)                    return 'point';
       return 'other';
     }
 
@@ -6168,36 +6640,103 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       return ob_lastGesture;
     }
 
-    // Fix 5 — EMA smoothing of landmarks
+    // One Euro filter over all 21 landmarks × 3 coords. State lives in `state`
+    // (typed arrays); resetting is `state.lm = null` — same contract as the old
+    // EMA, so all existing reset points keep working.
     function ht_smoothLandmarks(rawLm, state) {
+      const now = performance.now() / 1000;
       if (!state.lm) {
         state.lm = rawLm.map(p => ({ x: p.x, y: p.y, z: p.z }));
+        state.xHat = new Float32Array(63);
+        state.dxHat = new Float32Array(63);
+        for (let i = 0; i < 21; i++) {
+          state.xHat[i * 3]     = rawLm[i].x;
+          state.xHat[i * 3 + 1] = rawLm[i].y;
+          state.xHat[i * 3 + 2] = rawLm[i].z;
+        }
+        state.t = now;
         return state.lm;
       }
+      const dt = Math.min(Math.max(now - state.t, 1 / 120), 1 / 5); // clamp 5–120fps
+      state.t = now;
+      const TAU = 2 * Math.PI;
+      const aD = 1 / (1 + 1 / (TAU * HT_OE_D_CUTOFF * dt)); // derivative lowpass alpha
       for (let i = 0; i < 21; i++) {
-        state.lm[i].x = HT_EMA_ALPHA * rawLm[i].x + (1 - HT_EMA_ALPHA) * state.lm[i].x;
-        state.lm[i].y = HT_EMA_ALPHA * rawLm[i].y + (1 - HT_EMA_ALPHA) * state.lm[i].y;
-        state.lm[i].z = HT_EMA_ALPHA * rawLm[i].z + (1 - HT_EMA_ALPHA) * state.lm[i].z;
+        const p = rawLm[i];
+        const raw = [p.x, p.y, p.z];
+        for (let c = 0; c < 3; c++) {
+          const k = i * 3 + c;
+          const dx = (raw[c] - state.xHat[k]) / dt;
+          state.dxHat[k] = aD * dx + (1 - aD) * state.dxHat[k];
+          const cutoff = HT_OE_MIN_CUTOFF + HT_OE_BETA * Math.abs(state.dxHat[k]);
+          const a = 1 / (1 + 1 / (TAU * cutoff * dt));
+          state.xHat[k] = a * raw[c] + (1 - a) * state.xHat[k];
+        }
+        state.lm[i].x = state.xHat[i * 3];
+        state.lm[i].y = state.xHat[i * 3 + 1];
+        state.lm[i].z = state.xHat[i * 3 + 2];
       }
       return state.lm;
     }
 
-    function ht_nearestNode(nx, ny) {
+    const _htVP = new THREE.Matrix4();
+    // stickyNode: current hover — a rival must be HT_STICKY_FACTOR× closer to
+    // steal it (stops hover ping-pong in dense regions).
+    function ht_nearestNode(nx, ny, stickyNode = null) {
+      const cand = ht_nearestNodeRaw(nx, ny);
+      if (!cand || !stickyNode || cand.node === stickyNode) return cand ? cand.node : null;
+      const sd = ht_screenDist(stickyNode, nx, ny);
+      if (sd !== null && sd < 100 && cand.d > sd * HT_STICKY_FACTOR) return stickyNode;
+      return cand.node;
+    }
+
+    function ht_screenDist(node, nx, ny) {
+      if (!Graph) return null;
+      const sc = Graph.graph2ScreenCoords(node.x, node.y, node.z);
+      if (!sc) return null;
+      return Math.hypot(sc.x - nx * window.innerWidth, sc.y - ny * window.innerHeight);
+    }
+
+    function ht_nearestNodeRaw(nx, ny) {
       if (!Graph) return null;
       const sx = nx * window.innerWidth;
       const sy = ny * window.innerHeight;
       let best = null, bestD = Infinity;
+      if (perfMode && perf) {
+        // Perf mode: graphData() is empty — project the instanced positions
+        // manually (36k × ~20 flops per frame, fine while pointing).
+        const cam = Graph.camera();
+        cam.updateMatrixWorld();
+        _htVP.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+        const e = _htVP.elements;
+        const w2 = window.innerWidth / 2, h2 = window.innerHeight / 2;
+        const p = perf.positions;
+        for (let i = 0; i < perf.nodes.length; i++) {
+          if (perf.scales[i] === 0) continue; // hidden by tag filter
+          const x = p[i * 3], y = p[i * 3 + 1], z = p[i * 3 + 2];
+          const cw = e[3] * x + e[7] * y + e[11] * z + e[15];
+          if (cw <= 0) continue; // behind camera
+          const cx = (e[0] * x + e[4] * y + e[8] * z + e[12]) / cw;
+          const cy = (e[1] * x + e[5] * y + e[9] * z + e[13]) / cw;
+          const d = Math.hypot((cx + 1) * w2 - sx, (1 - cy) * h2 - sy);
+          if (d < bestD) { bestD = d; best = perf.nodes[i]; }
+        }
+        return bestD < 100 ? { node: best, d: bestD } : null;
+      }
       Graph.graphData().nodes.forEach(n => {
         const sc = Graph.graph2ScreenCoords(n.x, n.y, n.z);
         const d  = Math.hypot(sc.x - sx, sc.y - sy);
         if (d < bestD) { bestD = d; best = n; }
       });
-      return bestD < 100 ? best : null;
+      return bestD < 100 ? { node: best, d: bestD } : null;
     }
 
+    let ht_dbgInfo = '';
     function ht_setLabel(text) {
       const el = document.getElementById('ht-gesture-label');
-      if (el) el.textContent = text;
+      // ?debug=1 appends raw gesture + per-finger extension bits (IMRP) so
+      // classifier thresholds can be tuned live.
+      if (el) el.textContent = DEBUG && ht_dbgInfo ? `${text} · ${ht_dbgInfo}` : text;
     }
 
     function ht_onResults(results) {
@@ -6338,7 +6877,27 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const lm      = ht_smoothLandmarks(rawLm, ht_emaState);
       ht_drawSkeleton(lm);
       const rawGesture = ht_gesture(lm);
+      if (DEBUG) ht_dbgInfo = rawGesture + ' ' + ht_extendedState.map(b => b ? '1' : '0').join('');
       const gesture    = ht_debouncedGesture(rawGesture);
+
+      // ── Pinch (index tip ↔ thumb tip) → instant select while hovering ────
+      // Checked before gesture branching: closing the pinch bends the index,
+      // which can briefly flip the classified gesture — the debounce lock
+      // keeps 'point' (and ht_hoverNode) alive long enough for this to fire.
+      {
+        const hs = Math.hypot(lm[9].x - lm[0].x, lm[9].y - lm[0].y) || 1e-6;
+        const pinchD = Math.hypot(lm[8].x - lm[4].x, lm[8].y - lm[4].y) / hs;
+        if (ht_pinchActive) {
+          if (pinchD > HT_PINCH_EXIT) ht_pinchActive = false;
+        } else if (pinchD < HT_PINCH_ENTER) {
+          ht_pinchActive = true;
+          if (ht_hoverNode) {
+            handleNodeClick(ht_hoverNode);
+            ht_pointFrames = -HT_DWELL_COOLDOWN;
+            ht_setLabel('SELECT ✓');
+          }
+        }
+      }
       // Mirror x so it feels like a mirror
       const px = 1 - lm[9].x;
       const py = lm[9].y;
@@ -6393,51 +6952,56 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
         if (!Graph) return;
 
-        // Direct finger→screen mapping: find nearest node to finger position
-        const nearest = ht_nearestNode(fx, fy);
+        // On-graph cursor follows the fingertip — you can SEE where you point
+        ht_cursorEl.style.display = '';
+        ht_cursorEl.style.left = (fx * window.innerWidth) + 'px';
+        ht_cursorEl.style.top  = (fy * window.innerHeight) + 'px';
 
-        // Check if finger is still (for click accumulation)
-        const dx = ht_pointPrevFx !== null ? fx - ht_pointPrevFx : 0;
-        const dy = ht_pointPrevFy !== null ? fy - ht_pointPrevFy : 0;
-        const delta = Math.hypot(dx, dy);
-        ht_pointPrevFx = fx;
-        ht_pointPrevFy = fy;
+        // Nearest node with hover stickiness (rival must be clearly closer)
+        const nearest = ht_nearestNode(fx, fy, ht_hoverNode);
 
-        // If finger moved, update hover to nearest node
-        if (delta > HT_STILL_POINT || nearest !== ht_hoverNode) {
-          if (nearest && nearest !== ht_hoverNode) {
+        if (nearest) {
+          ht_hoverGraceFrames = 0;
+          if (nearest !== ht_hoverNode) {
             ht_hoverNode = nearest;
             ht_pointFrames = 0;
             handleNodeHover(nearest);
           }
+        } else if (ht_hoverNode) {
+          // grace: hover survives brief drifts off the node
+          if (++ht_hoverGraceFrames > HT_HOVER_GRACE) {
+            ht_hoverNode = null;
+            ht_pointFrames = 0;
+            ht_hoverGraceFrames = 0;
+            handleNodeHover(null);
+          }
         }
 
-        // If hovering and finger is still, accumulate click
+        // Dwell-to-select: stay on the SAME node — micro-movement doesn't
+        // reset progress (the old stillness gate made selection a chore).
         const progressRing = document.getElementById('hover-progress-ring');
         const progressArc = document.getElementById('hover-progress-arc');
-        if (ht_hoverNode && delta <= HT_STILL_POINT) {
+        if (ht_hoverNode) {
           ht_pointFrames++;
-          const pct = Math.min(1, ht_pointFrames / HT_CLICK_FRAMES);
-          // Update progress ring
+          const pct = Math.max(0, Math.min(1, ht_pointFrames / HT_DWELL_FRAMES));
           if (progressRing && progressArc) {
-            progressRing.style.display = '';
+            progressRing.style.display = ht_pointFrames > 0 ? '' : 'none';
             const circumference = 2 * Math.PI * 10;
             progressArc.setAttribute('stroke-dashoffset', String(circumference * (1 - pct)));
             const nodeColor = CLUSTER_COLORS[ht_hoverNode.cluster_id % CLUSTER_COLORS.length];
             progressArc.setAttribute('stroke', nodeColor);
           }
-          // Update floating label position
-          if (Graph && ht_hoverNode) {
-            const sp = Graph.graph2ScreenCoords(ht_hoverNode.x, ht_hoverNode.y, ht_hoverNode.z);
-            if (sp) {
-              const hb = document.getElementById('hover-info');
-              hb.style.left = (sp.x + 20) + 'px';
-              hb.style.top = (sp.y - 20) + 'px';
-            }
+          // Floating label follows the hovered node
+          const sp = Graph.graph2ScreenCoords(ht_hoverNode.x, ht_hoverNode.y, ht_hoverNode.z);
+          if (sp) {
+            const hb = document.getElementById('hover-info');
+            hb.style.left = (sp.x + 20) + 'px';
+            hb.style.top = (sp.y - 20) + 'px';
           }
-          if (ht_pointFrames >= HT_CLICK_FRAMES) {
+          if (ht_pointFrames >= HT_DWELL_FRAMES) {
             handleNodeClick(ht_hoverNode);
-            ht_pointFrames = 0;
+            // negative = cooldown before the same node can re-trigger
+            ht_pointFrames = -HT_DWELL_COOLDOWN;
             if (progressRing) progressRing.style.display = 'none';
           }
           ht_setLabel(`→ ${ht_hoverNode.name.slice(0, 18)} [${Math.round(pct * 100)}%]`);
@@ -6447,7 +7011,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           if (progressRing) progressRing.style.display = 'none';
         }
 
-        ht_setLabel(ht_hoverNode ? `→ ${ht_hoverNode.name.slice(0, 20)}` : 'POINT');
+        ht_setLabel('POINT');
         return;
       }
 
@@ -6456,6 +7020,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       ht_candidateFrames = 0;
       ht_pointPrevFx     = null;
       ht_pointPrevFy     = null;
+      ht_hoverGraceFrames = 0;
+      ht_cursorEl.style.display = 'none';
       // Reset hover state and progress ring when leaving point gesture
       const _pr = document.getElementById('hover-progress-ring');
       if (_pr) _pr.style.display = 'none';
@@ -6490,8 +7056,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
             ht_fistStillFrames = 0;
             ht_hoverNode  = null;
             if (Graph) {
-              // Zoom to fit entire graph with 100px padding, 1s animation
-              Graph.zoomToFit(2500, 80);
+              if (perfMode) {
+                // zoomToFit reads graphData(), which perf mode leaves empty —
+                // frame the instanced scene by its bounding radius instead.
+                Graph.cameraPosition({ x: 0, y: 0, z: perfBoundingRadius() * 1.9 }, { x: 0, y: 0, z: 0 }, 2500);
+              } else {
+                // Zoom to fit entire graph with 100px padding, 1s animation
+                Graph.zoomToFit(2500, 80);
+              }
               handleNodeHover(null);
             }
             // Sync spherical coords after zoomToFit finishes
@@ -6541,16 +7113,106 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     function ht_init() {
       const video = document.getElementById('ht-video');
-      const CAM_W = 320, CAM_H = 180;
+      // 640×360 (was 320×180): 4× pixels → the palm detector can find hands at
+      // desk distance and landmark quantization noise halves. MediaPipe
+      // downscales internally, so per-frame cost grows only slightly.
+      const CAM_W = 640, CAM_H = 360;
       const CROP_SZ = 256;
 
       // ── Offscreen canvas for wrist crops ─────────────────────────────────
       const cropCanvas = document.createElement('canvas');
       cropCanvas.width = CROP_SZ; cropCanvas.height = CROP_SZ;
-      const cropCtx = cropCanvas.getContext('2d');
+      const cropCtx = cropCanvas.getContext('2d', { willReadFrequently: true });
 
       let smoothCrop = null;
       const CROP_EMA = 0.5;
+
+      // ── Bright-background compensation ───────────────────────────────────
+      // Webcams auto-expose for the whole scene: a white/bright background
+      // darkens the hand and MediaPipe landmarks get noisy. We sample scene
+      // luminance every few frames and pre-filter the frame (lift brightness/
+      // contrast, GPU-accelerated canvas filter) before inference.
+      const preCanvas = document.createElement('canvas');
+      preCanvas.width = CAM_W; preCanvas.height = CAM_H;
+      const preCtx = preCanvas.getContext('2d');
+      const lumaCanvas = document.createElement('canvas');
+      lumaCanvas.width = 32; lumaCanvas.height = 18;
+      const lumaCtx = lumaCanvas.getContext('2d', { willReadFrequently: true });
+      let _lumaFrame = 0;
+      let _preFilter = 'none';
+      function ht_updateExposureComp() {
+        try {
+          lumaCtx.drawImage(video, 0, 0, 32, 18);
+          const d = lumaCtx.getImageData(0, 0, 32, 18).data;
+          let sum = 0;
+          for (let i = 0; i < d.length; i += 4) {
+            sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+          }
+          const mean = sum / (d.length / 4);
+          _preFilter = mean > 175 ? 'brightness(1.28) contrast(1.28)'
+                     : mean > 145 ? 'brightness(1.14) contrast(1.15)'
+                     : 'none';
+        } catch (e) { _preFilter = 'none'; }
+      }
+      // ── Contrast-limited histogram equalization of the wrist crop ────────
+      // The crop IS the hand's local region: expanding its histogram to full
+      // range is software "spot metering" — a hand underexposed against a
+      // bright background regains contrast before Hands sees it. Contrast
+      // limiting (clip) keeps noise from blowing up; a gate skips crops that
+      // are already well exposed.
+      const HT_EQ_CLIP = 2.5;          // histogram clip factor (CLAHE-style)
+      const _eqHist = new Uint32Array(256);
+      const _eqLut = new Uint8Array(256);
+      function ht_equalizeCrop() {
+        const img = cropCtx.getImageData(0, 0, CROP_SZ, CROP_SZ);
+        const d = img.data;
+        const n = CROP_SZ * CROP_SZ;
+        _eqHist.fill(0);
+        let sum = 0, sum2 = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          const y = (d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8;
+          _eqHist[y]++;
+          sum += y; sum2 += y * y;
+        }
+        const mean = sum / n;
+        const std = Math.sqrt(Math.max(0, sum2 / n - mean * mean));
+        // gate: only fix crops that are low-contrast or badly exposed
+        if (std > 52 && mean > 85 && mean < 165) return;
+        // clip histogram + redistribute excess (contrast limiting)
+        const clip = Math.max(1, (HT_EQ_CLIP * n / 256) | 0);
+        let excess = 0;
+        for (let b = 0; b < 256; b++) {
+          if (_eqHist[b] > clip) { excess += _eqHist[b] - clip; _eqHist[b] = clip; }
+        }
+        const add = excess / 256;
+        let cum = 0;
+        for (let b = 0; b < 256; b++) {
+          cum += _eqHist[b] + add;
+          _eqLut[b] = Math.min(255, Math.round(cum * 255 / n));
+        }
+        // per-pixel luminance gain (preserves hue)
+        for (let i = 0; i < d.length; i += 4) {
+          const y = (d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8;
+          if (y === 0) continue;
+          const g = _eqLut[y] / y;
+          if (g === 1) continue;
+          d[i]     = Math.min(255, d[i] * g);
+          d[i + 1] = Math.min(255, d[i + 1] * g);
+          d[i + 2] = Math.min(255, d[i + 2] * g);
+        }
+        cropCtx.putImageData(img, 0, 0);
+      }
+
+      // Returns the (possibly filtered) frame to feed MediaPipe.
+      let _lastFrameSrc = null; // set per camera frame; crops must reuse it
+      function ht_prepFrame() {
+        if (++_lumaFrame % 15 === 0) ht_updateExposureComp();
+        if (_preFilter === 'none') return video;
+        preCtx.filter = _preFilter;
+        preCtx.drawImage(video, 0, 0, CAM_W, CAM_H);
+        preCtx.filter = 'none';
+        return preCanvas;
+      }
 
       // ── MediaPipe Hands (receives crops or full frame) ────────────────────
       const mpHands = new Hands({
@@ -6560,7 +7222,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       mpHands.setOptions({
         maxNumHands: 2,
         modelComplexity: 1,   // full model — best landmark accuracy
-        minDetectionConfidence: 0.8,
+        minDetectionConfidence: 0.65, // was 0.8 — faster re-acquisition after losing track; the runtime HT_MIN_CONFIDENCE=0.75 filter still guards accepted hands
         minTrackingConfidence: 0.6
       });
 
@@ -6571,6 +7233,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         // If we used crops, remap landmarks back to full-frame coordinates
         if (activeCrops && results.multiHandLandmarks) {
           results.multiHandLandmarks.forEach((lm, hi) => {
+            // NOTE: activeCrops is always a single merged region covering all
+            // visible wrists, and Hands runs ON that crop canvas — so any hand
+            // it detects is inside the crop and this remap is always valid,
+            // even for 2 hands with 1 crop entry.
             const crop = activeCrops[Math.min(hi, activeCrops.length - 1)];
             lm.forEach(p => {
               p.x = crop.x / CAM_W + p.x * (crop.w / CAM_W);
@@ -6680,10 +7346,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
               h: Math.round(smoothCrop.h)
             };
             cropCtx.clearRect(0, 0, CROP_SZ, CROP_SZ);
-            cropCtx.drawImage(video,
+            cropCtx.drawImage(_lastFrameSrc || video,
               cropRegion.x, cropRegion.y, cropRegion.w, cropRegion.h,
               0, 0, CROP_SZ, CROP_SZ
             );
+            ht_equalizeCrop(); // local contrast: software spot-metering on the hand region
             activeCrops = [cropRegion];
             await mpHands.send({ image: cropCanvas });
             return;
@@ -6691,7 +7358,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         }
         // Fallback: no wrists detected by Pose — send full frame to Hands
         activeCrops = null;
-        await mpHands.send({ image: video });
+        await mpHands.send({ image: _lastFrameSrc || video });
       });
 
       // ── Camera loop ──────────────────────────────────────────────────────
@@ -6712,11 +7379,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           if (_mpBusy) return;            // drop frame if previous inference still running
           _mpBusy = true;
           try {
+            const src = ht_prepFrame();    // bright-background compensation
+            _lastFrameSrc = src;
             if (USE_POSE_CROP) {
-              await mpPose.send({ image: video });
+              await mpPose.send({ image: src });
             } else {
               activeCrops = null;          // full-frame: landmarks need no remap
-              await mpHands.send({ image: video });
+              await mpHands.send({ image: src });
             }
           } finally { _mpBusy = false; }
         },
@@ -6727,21 +7396,42 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         cam.start();
         log('[ht_init] Camera started successfully');
         ht_setLabel('LOADING MODELS...');
+        // If the camera exposes exposure controls (rare on macOS, common on
+        // ChromeOS/Android), bias exposure up so a bright background doesn't
+        // underexpose the hand. Silently unsupported elsewhere.
+        setTimeout(async () => {
+          try {
+            const track = video.srcObject && video.srcObject.getVideoTracks()[0];
+            const caps = track && track.getCapabilities ? track.getCapabilities() : null;
+            if (caps && caps.exposureCompensation && caps.exposureCompensation.max > 0) {
+              await track.applyConstraints({
+                advanced: [{ exposureCompensation: caps.exposureCompensation.max * 0.5 }]
+              });
+              log('[ht_init] exposureCompensation applied');
+            }
+          } catch (e) { /* not supported — canvas prefilter still active */ }
+        }, 1500);
       } catch (err) {
         console.error('[ht_init] Camera start failed:', err);
         ht_setLabel('CAMERA ERROR: ' + err.message);
       }
     }
 
-    // Start hand tracking when the setup screen is hidden (graph is ready)
+    // Start hand tracking when the setup screen is hidden (graph is ready).
+    // ?ob=0 skips the gesture onboarding (straight to the graph — useful for
+    // direct links and automated testing; hand tracking still starts).
+    const _skipOnboarding = new URLSearchParams(location.search).get('ob') === '0';
     const _htObserver = new MutationObserver(() => {
       if (document.getElementById('setup').classList.contains('hidden')) {
         _htObserver.disconnect();
-        // Hide real graph during onboarding so it doesn't bleed through
-        document.getElementById('graph').style.visibility = 'hidden';
-        // Sync spherical coords with initial camera position
         ht_camR = SCALE * 2.5; ht_camPhi = 0; ht_camTheta = Math.PI / 2;
         ht_init();
+        if (_skipOnboarding) {
+          appState = 'ready';
+          return;
+        }
+        // Hide real graph during onboarding so it doesn't bleed through
+        document.getElementById('graph').style.visibility = 'hidden';
         appState = 'onboarding';
         startOnboarding();
       }

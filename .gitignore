@@ -3,4 +3,5 @@ settings.local.json
 graphs/*.html
 __pycache__/
 *.pyc
+.venv/
 .nodeviz-chrome-profile/
