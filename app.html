@@ -7127,6 +7127,44 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       let smoothCrop = null;
       const CROP_EMA = 0.5;
 
+      // ── Bright-background compensation ───────────────────────────────────
+      // Webcams auto-expose for the whole scene: a white/bright background
+      // darkens the hand and MediaPipe landmarks get noisy. We sample scene
+      // luminance every few frames and pre-filter the frame (lift brightness/
+      // contrast, GPU-accelerated canvas filter) before inference.
+      const preCanvas = document.createElement('canvas');
+      preCanvas.width = CAM_W; preCanvas.height = CAM_H;
+      const preCtx = preCanvas.getContext('2d');
+      const lumaCanvas = document.createElement('canvas');
+      lumaCanvas.width = 32; lumaCanvas.height = 18;
+      const lumaCtx = lumaCanvas.getContext('2d', { willReadFrequently: true });
+      let _lumaFrame = 0;
+      let _preFilter = 'none';
+      function ht_updateExposureComp() {
+        try {
+          lumaCtx.drawImage(video, 0, 0, 32, 18);
+          const d = lumaCtx.getImageData(0, 0, 32, 18).data;
+          let sum = 0;
+          for (let i = 0; i < d.length; i += 4) {
+            sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+          }
+          const mean = sum / (d.length / 4);
+          _preFilter = mean > 175 ? 'brightness(1.28) contrast(1.28)'
+                     : mean > 145 ? 'brightness(1.14) contrast(1.15)'
+                     : 'none';
+        } catch (e) { _preFilter = 'none'; }
+      }
+      // Returns the (possibly filtered) frame to feed MediaPipe.
+      let _lastFrameSrc = null; // set per camera frame; crops must reuse it
+      function ht_prepFrame() {
+        if (++_lumaFrame % 15 === 0) ht_updateExposureComp();
+        if (_preFilter === 'none') return video;
+        preCtx.filter = _preFilter;
+        preCtx.drawImage(video, 0, 0, CAM_W, CAM_H);
+        preCtx.filter = 'none';
+        return preCanvas;
+      }
+
       // ── MediaPipe Hands (receives crops or full frame) ────────────────────
       const mpHands = new Hands({
         locateFile: file =>
@@ -7259,7 +7297,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
               h: Math.round(smoothCrop.h)
             };
             cropCtx.clearRect(0, 0, CROP_SZ, CROP_SZ);
-            cropCtx.drawImage(video,
+            cropCtx.drawImage(_lastFrameSrc || video,
               cropRegion.x, cropRegion.y, cropRegion.w, cropRegion.h,
               0, 0, CROP_SZ, CROP_SZ
             );
@@ -7270,7 +7308,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         }
         // Fallback: no wrists detected by Pose — send full frame to Hands
         activeCrops = null;
-        await mpHands.send({ image: video });
+        await mpHands.send({ image: _lastFrameSrc || video });
       });
 
       // ── Camera loop ──────────────────────────────────────────────────────
@@ -7291,11 +7329,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           if (_mpBusy) return;            // drop frame if previous inference still running
           _mpBusy = true;
           try {
+            const src = ht_prepFrame();    // bright-background compensation
+            _lastFrameSrc = src;
             if (USE_POSE_CROP) {
-              await mpPose.send({ image: video });
+              await mpPose.send({ image: src });
             } else {
               activeCrops = null;          // full-frame: landmarks need no remap
-              await mpHands.send({ image: video });
+              await mpHands.send({ image: src });
             }
           } finally { _mpBusy = false; }
         },
@@ -7306,6 +7346,21 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         cam.start();
         log('[ht_init] Camera started successfully');
         ht_setLabel('LOADING MODELS...');
+        // If the camera exposes exposure controls (rare on macOS, common on
+        // ChromeOS/Android), bias exposure up so a bright background doesn't
+        // underexpose the hand. Silently unsupported elsewhere.
+        setTimeout(async () => {
+          try {
+            const track = video.srcObject && video.srcObject.getVideoTracks()[0];
+            const caps = track && track.getCapabilities ? track.getCapabilities() : null;
+            if (caps && caps.exposureCompensation && caps.exposureCompensation.max > 0) {
+              await track.applyConstraints({
+                advanced: [{ exposureCompensation: caps.exposureCompensation.max * 0.5 }]
+              });
+              log('[ht_init] exposureCompensation applied');
+            }
+          } catch (e) { /* not supported — canvas prefilter still active */ }
+        }, 1500);
       } catch (err) {
         console.error('[ht_init] Camera start failed:', err);
         ht_setLabel('CAMERA ERROR: ' + err.message);
