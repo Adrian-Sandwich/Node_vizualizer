@@ -6676,7 +6676,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let ob_candidateFrames = 0;
     const OB_HOVER_FRAMES  = 5;   // frames to commit hover
     let ob_pointFrames     = 0;
-    const OB_CLICK_FRAMES  = 45;  // hold ~0.75s to "select" node
+    const OB_CLICK_FRAMES  = 15;  // dwell ~0.5s — matches the real app's dwell-to-select
+    let ob_hoverGrace      = 0;   // frames hover survives off-node / gesture flicker
 
     // Step 2 (zoom): accumulate real zoom delta
     let ob_zoomTotal = 0;
@@ -6699,7 +6700,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         .graphData({ nodes: OB_MOCK_NODES, links: OB_MOCK_LINKS })
         .nodeLabel('name')
         .nodeColor(n => ['#66d9ff', '#7b8cff', '#b07bff', '#ff7bd5', '#a5f3ff', '#8a7bff'][parseInt(n.id.slice(1)) % 6])
-        .nodeVal(8)
+        .nodeVal(14)
         .linkColor(() => 'rgba(123,140,255,0.45)')
         .linkWidth(1)
         .backgroundColor('#02020a')
@@ -6756,6 +6757,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     function advanceObStep() {
       if (ob_stepLocked) return;
       ob_stepLocked = true;
+      ht_cursorEl.style.display = 'none';
       ob_interactionEnabled = false;
       document.getElementById('ob-feedback').textContent = '✓ GESTO DETECTADO';
       document.getElementById('ob-hud').classList.add('ob-hud--success');
@@ -6780,6 +6782,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const ob = document.getElementById('onboarding');
       ob.style.transition = 'opacity 0.8s';
       ob.style.opacity = '0';
+      ht_cursorEl.style.display = 'none';
       setTimeout(() => {
         ob.classList.add('hidden');
         if (ObGraph) { if (ObGraph._destructor) ObGraph._destructor(); ObGraph = null; }
@@ -6826,11 +6829,16 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         return;
       }
 
-      // ── Step 1 — point: hover + hold to select (with hysteresis) ──────
+      // ── Step 1 — point: on-graph cursor + dwell (same feel as the app) ─
       if (obStep === 1) {
-        if (gesture === 'point' && ObGraph) {
+        if (lm) {
           const fx = 1 - lm[8].x;
           const fy = lm[8].y;
+          // show the real fingertip cursor — aiming blind was the #1 way to
+          // get stuck on this step
+          ht_cursorEl.style.display = '';
+          ht_cursorEl.style.left = (fx * window.innerWidth) + 'px';
+          ht_cursorEl.style.top  = (fy * window.innerHeight) + 'px';
           const sx = fx * window.innerWidth;
           const sy = fy * window.innerHeight;
           let best = null, bestD = Infinity;
@@ -6839,43 +6847,23 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
             const d = Math.hypot(sc.x - sx, sc.y - sy);
             if (d < bestD) { bestD = d; best = n; }
           });
-          const nearest = bestD < 100 ? best : null;
+          const nearest = bestD < 150 ? best : null; // generous tutorial radius
 
-          // Hysteresis: require OB_HOVER_FRAMES consecutive frames to commit hover
-          if (nearest === ob_hoverNode) {
-            ob_candidateNode   = null;
-            ob_candidateFrames = 0;
-            // Already hovering this node — accumulate hold frames
-            if (nearest) {
-              ob_pointFrames++;
-              const pct = Math.min(1, ob_pointFrames / OB_CLICK_FRAMES);
-              fbEl.textContent = '→ ' + nearest.name + ' [' + Math.round(pct * 100) + '%]';
-              if (ob_pointFrames >= OB_CLICK_FRAMES) advanceObStep();
-            } else {
-              ob_pointFrames = 0;
-              fbEl.textContent = '';
-            }
+          if (nearest) {
+            ob_hoverGrace = 0;
+            if (nearest !== ob_hoverNode) { ob_hoverNode = nearest; ob_pointFrames = 0; }
+            // dwell: accumulate while ON the node — gesture flicker or micro
+            // movement does NOT reset (the old stillness+45-frame rule is why
+            // everyone got stuck here)
+            ob_pointFrames++;
+            const pct = Math.min(1, ob_pointFrames / OB_CLICK_FRAMES);
+            fbEl.textContent = '→ ' + ob_hoverNode.name + ' [' + Math.round(pct * 100) + '%]';
+            if (ob_pointFrames >= OB_CLICK_FRAMES) { advanceObStep(); return; }
+          } else if (ob_hoverNode) {
+            if (++ob_hoverGrace > 10) { ob_hoverNode = null; ob_pointFrames = 0; ob_hoverGrace = 0; fbEl.textContent = 'ACERCA EL CURSOR A UN NODO'; }
           } else {
-            // Different node — require consecutive frames before switching
-            if (nearest === ob_candidateNode) {
-              ob_candidateFrames++;
-            } else {
-              ob_candidateNode   = nearest;
-              ob_candidateFrames = 1;
-            }
-            if (ob_candidateFrames >= OB_HOVER_FRAMES) {
-              ob_hoverNode       = nearest;
-              ob_pointFrames     = 0;
-              ob_candidateNode   = null;
-              ob_candidateFrames = 0;
-            }
+            fbEl.textContent = 'ACERCA EL CURSOR A UN NODO';
           }
-        } else {
-          // Not pointing — reset candidate streak but keep hover
-          ob_candidateNode   = null;
-          ob_candidateFrames = 0;
-          ob_pointFrames     = 0;
-          fbEl.textContent   = '';
         }
         return;
       }
@@ -6885,6 +6873,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         if (ObGraph && lm) {
           const fx = 1 - lm[8].x;
           const fy = lm[8].y;
+          ht_cursorEl.style.display = '';
+          ht_cursorEl.style.left = (fx * window.innerWidth) + 'px';
+          ht_cursorEl.style.top  = (fy * window.innerHeight) + 'px';
           const sx = fx * window.innerWidth;
           const sy = fy * window.innerHeight;
           let best = null, bestD = Infinity;
