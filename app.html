@@ -4440,6 +4440,9 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       selectedNode = null;
       dcNavStack.length = 0;
       dcMgHitAreas = [];
+      // Perf mode: node/edge colors live in instanced buffers — repaint them
+      // or the neighbor-dim from the previous selection sticks forever.
+      if (perfMode) perfApplyHighlight();
       if (Graph) {
         Graph.graphData().nodes.forEach(n => updateNodeAppearance(n, 'normal'));
         Graph.linkOpacity(1.0);
@@ -4584,8 +4587,9 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         e.preventDefault();
         dcNavigateBack();
       } else if (key === 'h' && Graph) {
-        // H: reset camera
-        Graph.cameraPosition({ x: 0, y: 0, z: SCALE * 4 }, { x: 0, y: 0, z: 0 }, 1000);
+        // H: reset camera (perf mode frames the instanced scene's bounds)
+        const hz = perfMode ? perfBoundingRadius() * 1.9 : SCALE * 4;
+        Graph.cameraPosition({ x: 0, y: 0, z: hz }, { x: 0, y: 0, z: 0 }, 1000);
       } else if (key === 'l' && Graph) {
         // L: toggle labels
         labelsVisible = !labelsVisible;
@@ -7052,8 +7056,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
             ht_fistStillFrames = 0;
             ht_hoverNode  = null;
             if (Graph) {
-              // Zoom to fit entire graph with 100px padding, 1s animation
-              Graph.zoomToFit(2500, 80);
+              if (perfMode) {
+                // zoomToFit reads graphData(), which perf mode leaves empty —
+                // frame the instanced scene by its bounding radius instead.
+                Graph.cameraPosition({ x: 0, y: 0, z: perfBoundingRadius() * 1.9 }, { x: 0, y: 0, z: 0 }, 2500);
+              } else {
+                // Zoom to fit entire graph with 100px padding, 1s animation
+                Graph.zoomToFit(2500, 80);
+              }
               handleNodeHover(null);
             }
             // Sync spherical coords after zoomToFit finishes
