@@ -5458,9 +5458,58 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     // ═══ GALAXY VIEW (Celestial Dynamics) ══════════════════════════════════
     // Deep-space dressing (starfield + nebula theme) plus an on-demand
-    // concentric re-arrangement animated from wherever the nodes are.
+    // spiral-galaxy re-arrangement animated from wherever the nodes are.
     let _starfield = null;
     let _galaxyAnimRAF = null;
+
+    // Spiral-galaxy arrangement (aesthetics-first): logarithmic spiral arms,
+    // dense core, thin disc with a central bulge. Degree decides orbit
+    // (hubs in the core, leaves outward); domains map to arms — large
+    // domains span several arms so no single arm bloats.
+    function computeSpiralGalaxyLayout(nodes, edges, radius = 1400) {
+      const ARMS = 4;
+      const SWIRL = 2.4 * Math.PI; // total twist across the disc
+      const n = nodes.length;
+      const idx = new Map();
+      nodes.forEach((nd, i) => idx.set(nd.id, i));
+      const deg = new Float64Array(n);
+      for (const e of (edges || [])) {
+        const a = idx.get(typeof e.source === 'object' ? e.source.id : e.source);
+        const b = idx.get(typeof e.target === 'object' ? e.target.id : e.target);
+        if (a == null || b == null) continue;
+        deg[a]++; deg[b]++;
+      }
+      let maxDeg = 1;
+      for (let i = 0; i < n; i++) if (deg[i] > maxDeg) maxDeg = deg[i];
+      const logMax = Math.log1p(maxDeg);
+      let seed = 1234567; // deterministic
+      const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+      const gauss = () => (rnd() + rnd() + rnd() - 1.5) / 1.5;
+      // arm assignment: base arm per domain; domains bigger than one arm's
+      // share spread across several consecutive arms
+      const domSize = new Map(), domBase = new Map();
+      nodes.forEach(nd => {
+        const k = nd._domain || 'default';
+        domSize.set(k, (domSize.get(k) || 0) + 1);
+        if (!domBase.has(k)) domBase.set(k, domBase.size % ARMS);
+      });
+      const armShare = n / ARMS;
+      nodes.forEach((nd, i) => {
+        const k = nd._domain || 'default';
+        const spread = Math.max(1, Math.min(ARMS, Math.ceil(domSize.get(k) / armShare)));
+        const arm = (domBase.get(k) + ((rnd() * spread) | 0)) % ARMS;
+        const t = 1 - Math.log1p(deg[i]) / logMax; // 0 = hub … 1 = leaf
+        const rNorm = Math.min(1, Math.max(0.02, Math.pow(t, 1.25) + gauss() * 0.05));
+        const rr = radius * (0.05 + 0.95 * rNorm);
+        const theta = arm * (2 * Math.PI / ARMS)
+                    + (rr / radius) * SWIRL
+                    + gauss() * (0.18 + 0.5 * (1 - rr / radius)); // fuzzier near the core
+        const thick = radius * (0.15 * Math.pow(1 - rr / radius, 1.6) + 0.02); // bulge
+        nd.x = rr * Math.cos(theta);
+        nd.z = rr * Math.sin(theta);
+        nd.y = gauss() * thick;
+      });
+    }
 
     function ensureStarfield() {
       if (_starfield || !Graph) return;
@@ -5530,7 +5579,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       if (perfMode && perf) {
         const n = perf.nodes.length;
         const start = perf.positions.slice();
-        computeFallbackLayout(perf.nodes, perf.edges); // writes target x,y,z
+        computeSpiralGalaxyLayout(perf.nodes, perf.edges); // writes target x,y,z
         const target = new Float32Array(n * 3);
         let maxR2 = 0;
         perf.nodes.forEach((nd, i) => {
@@ -5538,9 +5587,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           const r2 = nd.x * nd.x + nd.y * nd.y + nd.z * nd.z;
           if (r2 > maxR2) maxR2 = r2;
         });
-        // frame the incoming arrangement while it animates
+        // frame the incoming arrangement while it animates — tilted overhead
+        // view so the spiral reads as a galaxy (edge-on it's just a line)
         ht_setOrbitCenter(0, 0, 0);
-        Graph.cameraPosition({ x: 0, y: 0, z: Math.sqrt(maxR2) * 2.1 }, { x: 0, y: 0, z: 0 }, duration);
+        const fr = Math.sqrt(maxR2);
+        Graph.cameraPosition({ x: 0, y: fr * 1.7, z: fr * 1.15 }, { x: 0, y: 0, z: 0 }, duration);
         const m4 = new THREE.Matrix4();
         const t0 = performance.now();
         const step = () => {
@@ -5585,10 +5636,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           source: typeof l.source === 'object' ? l.source.id : l.source,
           target: typeof l.target === 'object' ? l.target.id : l.target,
         }));
-        computeFallbackLayout(nodes, links, SCALE * 4);
+        computeSpiralGalaxyLayout(nodes, links, SCALE * 4);
         const target = nodes.map(nd => [nd.x, nd.y, nd.z]);
         ht_setOrbitCenter(0, 0, 0);
-        Graph.cameraPosition({ x: 0, y: 0, z: SCALE * 4 * 2.1 }, { x: 0, y: 0, z: 0 }, duration);
+        Graph.cameraPosition({ x: 0, y: SCALE * 4 * 1.7, z: SCALE * 4 * 1.15 }, { x: 0, y: 0, z: 0 }, duration);
         const t0 = performance.now();
         const step = () => {
           if (!Graph) { _galaxyAnimRAF = null; return; }
