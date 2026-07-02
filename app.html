@@ -1126,6 +1126,28 @@
       color: var(--text);
       border-color: var(--blue);
     }
+    #galaxy-btn {
+      position: fixed;
+      bottom: 20px;
+      right: 130px;
+      z-index: 10;
+      background: var(--bg-panel);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      padding: 8px 14px;
+      cursor: pointer;
+      transition: color 200ms ease, border-color 200ms ease;
+    }
+    #galaxy-btn:hover {
+      color: var(--text);
+      border-color: #8a7bff;
+    }
 
   </style>
 </head>
@@ -1323,6 +1345,7 @@
 
     <!-- Config Panel: bottom-right -->
     <button id="theme-toggle" title="Switch color theme">MINIMAL</button>
+    <button id="galaxy-btn" title="Celestial Dynamics — vista galaxia (G)">✦ GALAXY</button>
 
   </div><!-- /main -->
 
@@ -3225,6 +3248,21 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         chromeCyan: '#7aacdf', chromeLightCyan: '#a0c8ef',
         chromeIndigo: '#8a9abf', chromeAmber: '#7aacdf',
       },
+      galaxy: {
+        // Celestial Dynamics — deep-space nebula palette (cyan/blue/violet)
+        bgColor: '#02020a', bgAlpha: 1.0,
+        labelColor: '#dfe6ff', labelAlpha: 1.0,
+        linkColor: '#5d7bff', linkAlpha: 0.35,
+        particleColor: '#9fd8ff', particleAlpha: 1.0,
+        cluster0: '#66d9ff', cluster1: '#7b8cff', cluster2: '#b07bff',
+        cluster3: '#ff7bd5', cluster4: '#a5f3ff', clusterAlpha: 1.0,
+        bloomStrength: 0.75, bloomRadius: 0.55, bloomThreshold: 0.08,
+        chromeBg: '#050510', chromeBgPanel: '#070716', chromeBgPanelA: 0.88,
+        chromeBorder: '#3d3d7a', chromeText: '#c9d2ff', chromeTextDim: '#7a86c9',
+        chromeTextBright: '#eef2ff', chromeAccent: '#8a7bff',
+        chromeCyan: '#66d9ff', chromeLightCyan: '#a5f3ff',
+        chromeIndigo: '#7b8cff', chromeAmber: '#ff7bd5',
+      },
       minimal: {
         bgColor: '#ffffff', bgAlpha: 1.0,
         labelColor: '#222222', labelAlpha: 1.0,
@@ -3270,6 +3308,13 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       refreshClusters();
       refreshChrome();
       refreshPostFx();
+
+      // Galaxy dressing: starfield lives only under the galaxy theme
+      if (Graph) {
+        if (name === 'galaxy') ensureStarfield(); else removeStarfield();
+      }
+      // Perf mode bakes node colors into instanced buffers — retint them
+      if (perfMode && perf) perfRebuildBaseColors();
 
       // Update button label
       document.getElementById('theme-toggle').textContent = name.toUpperCase();
@@ -4594,6 +4639,9 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         // H: reset camera (perf mode frames the instanced scene's bounds)
         const hz = perfMode ? perfBoundingRadius() * 1.9 : SCALE * 4;
         Graph.cameraPosition({ x: 0, y: 0, z: hz }, { x: 0, y: 0, z: 0 }, 1000);
+      } else if (key === 'g' && Graph) {
+        // G: Celestial Dynamics galaxy view (theme + concentric re-arrange)
+        goGalaxy();
       } else if (key === 'l' && Graph) {
         // L: toggle labels
         labelsVisible = !labelsVisible;
@@ -5195,14 +5243,30 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       });
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
 
-      const e = edges.length;
+      // Sort edges by 3D length (short/local first): the adaptive-quality
+      // draw-range cut then drops the LONGEST hairball edges instead of a
+      // random subset — degraded mode looks cleaner, not "cut".
+      const orderedEdges = edges.slice().sort((a, b) => {
+        const ia = idToIndex.get(a.source), ja = idToIndex.get(a.target);
+        const ib = idToIndex.get(b.source), jb = idToIndex.get(b.target);
+        const len = (i, j) => {
+          if (i == null || j == null) return Infinity;
+          const dx = positions[i * 3] - positions[j * 3];
+          const dy = positions[i * 3 + 1] - positions[j * 3 + 1];
+          const dz = positions[i * 3 + 2] - positions[j * 3 + 2];
+          return dx * dx + dy * dy + dz * dz;
+        };
+        return len(ia, ja) - len(ib, jb);
+      });
+
+      const e = orderedEdges.length;
       const linePos = new Float32Array(e * 6);
       const lineCol = new Uint8Array(e * 6);
       const edgeSrc = new Int32Array(e);
       const edgeDst = new Int32Array(e);
       for (let i = 0; i < e; i++) {
-        const si = idToIndex.get(edges[i].source);
-        const ti = idToIndex.get(edges[i].target);
+        const si = idToIndex.get(orderedEdges[i].source);
+        const ti = idToIndex.get(orderedEdges[i].target);
         edgeSrc[i] = si ?? -1; edgeDst[i] = ti ?? -1;
         if (si == null || ti == null) continue; // both verts stay at origin, zero-length
         linePos[i * 6]     = positions[si * 3];
@@ -5234,7 +5298,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       Graph.scene().add(lines);
       perf = { mesh, lines, sphereGeo, nodeMat, lineGeo, lineMat,
                positions, baseColors, scales, linePos, lineCol,
-               edgeSrc, edgeDst, nodes, idToIndex, handlers: {}, hoverIdx: -1 };
+               edgeSrc, edgeDst, nodes, edges: orderedEdges, idToIndex,
+               handlers: {}, hoverIdx: -1 };
     }
 
     function disposePerfScene() {
@@ -5391,6 +5456,162 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       colAttr.needsUpdate = true;
     }
 
+    // ═══ GALAXY VIEW (Celestial Dynamics) ══════════════════════════════════
+    // Deep-space dressing (starfield + nebula theme) plus an on-demand
+    // concentric re-arrangement animated from wherever the nodes are.
+    let _starfield = null;
+    let _galaxyAnimRAF = null;
+
+    function ensureStarfield() {
+      if (_starfield || !Graph) return;
+      const R = (perfMode && perf) ? perfBoundingRadius() : SCALE * 5;
+      const N = 4500;
+      const pos = new Float32Array(N * 3);
+      const col = new Float32Array(N * 3);
+      const tints = [[1, 1, 1], [0.75, 0.85, 1], [0.7, 0.75, 1], [0.85, 0.7, 1], [1, 0.85, 0.9]];
+      let seed = 42; // deterministic — same sky every load
+      const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+      for (let i = 0; i < N; i++) {
+        const r = R * (1.6 + 4.4 * Math.pow(rnd(), 0.7)); // shell 1.6R–6R
+        const u = rnd() * 2 - 1, ph = rnd() * Math.PI * 2;
+        const s = Math.sqrt(1 - u * u);
+        pos[i * 3] = r * s * Math.cos(ph);
+        pos[i * 3 + 1] = r * u;
+        pos[i * 3 + 2] = r * s * Math.sin(ph);
+        const t = tints[(rnd() * tints.length) | 0];
+        const b = 0.45 + rnd() * 0.55;
+        col[i * 3] = t[0] * b; col[i * 3 + 1] = t[1] * b; col[i * 3 + 2] = t[2] * b;
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      const mat = new THREE.PointsMaterial({
+        size: R * 0.01, vertexColors: true, transparent: true, opacity: 0.9,
+        sizeAttenuation: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      });
+      _starfield = new THREE.Points(geo, mat);
+      _starfield.frustumCulled = false;
+      Graph.scene().add(_starfield);
+      // stars sit out to ~6R — make sure the camera can see them
+      const cam = Graph.camera();
+      if (cam.far < R * 9) { cam.far = R * 9; cam.updateProjectionMatrix(); }
+    }
+
+    function removeStarfield() {
+      if (!_starfield) return;
+      try {
+        const s = Graph && Graph.scene && Graph.scene();
+        if (s) s.remove(_starfield);
+      } catch (e) { /* scene already gone */ }
+      _starfield.geometry.dispose();
+      _starfield.material.dispose();
+      _starfield = null;
+    }
+
+    // Re-derive the instanced base colors from CLUSTER_COLORS (themes change
+    // them) and repaint.
+    function perfRebuildBaseColors() {
+      if (!perf) return;
+      const col = new THREE.Color();
+      perf.nodes.forEach((node, i) => {
+        col.set(CLUSTER_COLORS[node.cluster_id % CLUSTER_COLORS.length] || '#888888');
+        perf.baseColors[i * 3] = col.r;
+        perf.baseColors[i * 3 + 1] = col.g;
+        perf.baseColors[i * 3 + 2] = col.b;
+      });
+      perfApplyHighlight();
+    }
+
+    // Animate the graph into the concentric galaxy arrangement from wherever
+    // the nodes currently are. Works in both perf and normal modes.
+    function galaxyArrange(duration = 2200) {
+      if (_galaxyAnimRAF) { cancelAnimationFrame(_galaxyAnimRAF); _galaxyAnimRAF = null; }
+      const ease = t => 1 - Math.pow(1 - t, 3);
+      if (perfMode && perf) {
+        const n = perf.nodes.length;
+        const start = perf.positions.slice();
+        computeFallbackLayout(perf.nodes, perf.edges); // writes target x,y,z
+        const target = new Float32Array(n * 3);
+        let maxR2 = 0;
+        perf.nodes.forEach((nd, i) => {
+          target[i * 3] = nd.x; target[i * 3 + 1] = nd.y; target[i * 3 + 2] = nd.z;
+          const r2 = nd.x * nd.x + nd.y * nd.y + nd.z * nd.z;
+          if (r2 > maxR2) maxR2 = r2;
+        });
+        // frame the incoming arrangement while it animates
+        ht_setOrbitCenter(0, 0, 0);
+        Graph.cameraPosition({ x: 0, y: 0, z: Math.sqrt(maxR2) * 2.1 }, { x: 0, y: 0, z: 0 }, duration);
+        const m4 = new THREE.Matrix4();
+        const t0 = performance.now();
+        const step = () => {
+          if (!perf) { _galaxyAnimRAF = null; return; }
+          const t = Math.min(1, (performance.now() - t0) / duration);
+          const e = ease(t);
+          for (let k = 0; k < n * 3; k++) {
+            perf.positions[k] = start[k] + (target[k] - start[k]) * e;
+          }
+          for (let i = 0; i < n; i++) {
+            const s = perf.scales[i] || 0.0001;
+            m4.makeScale(s, s, s).setPosition(
+              perf.positions[i * 3], perf.positions[i * 3 + 1], perf.positions[i * 3 + 2]);
+            perf.mesh.setMatrixAt(i, m4);
+          }
+          perf.mesh.instanceMatrix.needsUpdate = true;
+          for (let i = 0; i < perf.edgeSrc.length; i++) {
+            const si = perf.edgeSrc[i], ti = perf.edgeDst[i];
+            if (si < 0 || ti < 0) continue;
+            for (let k = 0; k < 3; k++) {
+              perf.linePos[i * 6 + k] = perf.positions[si * 3 + k];
+              perf.linePos[i * 6 + 3 + k] = perf.positions[ti * 3 + k];
+            }
+          }
+          perf.lineGeo.getAttribute('position').needsUpdate = true;
+          if (t < 1) { _galaxyAnimRAF = requestAnimationFrame(step); }
+          else {
+            _galaxyAnimRAF = null;
+            perf.nodes.forEach((nd, i) => {
+              nd.x = perf.positions[i * 3];
+              nd.y = perf.positions[i * 3 + 1];
+              nd.z = perf.positions[i * 3 + 2];
+            });
+          }
+        };
+        _galaxyAnimRAF = requestAnimationFrame(step);
+      } else if (Graph) {
+        const nodes = Graph.graphData().nodes;
+        if (!nodes.length) return;
+        const start = nodes.map(nd => [nd.x || 0, nd.y || 0, nd.z || 0]);
+        const links = Graph.graphData().links.map(l => ({
+          source: typeof l.source === 'object' ? l.source.id : l.source,
+          target: typeof l.target === 'object' ? l.target.id : l.target,
+        }));
+        computeFallbackLayout(nodes, links, SCALE * 4);
+        const target = nodes.map(nd => [nd.x, nd.y, nd.z]);
+        ht_setOrbitCenter(0, 0, 0);
+        Graph.cameraPosition({ x: 0, y: 0, z: SCALE * 4 * 2.1 }, { x: 0, y: 0, z: 0 }, duration);
+        const t0 = performance.now();
+        const step = () => {
+          if (!Graph) { _galaxyAnimRAF = null; return; }
+          const t = Math.min(1, (performance.now() - t0) / duration);
+          const e = ease(t);
+          nodes.forEach((nd, i) => {
+            nd.fx = start[i][0] + (target[i][0] - start[i][0]) * e;
+            nd.fy = start[i][1] + (target[i][1] - start[i][1]) * e;
+            nd.fz = start[i][2] + (target[i][2] - start[i][2]) * e;
+          });
+          Graph.d3ReheatSimulation();
+          _galaxyAnimRAF = t < 1 ? requestAnimationFrame(step) : null;
+        };
+        _galaxyAnimRAF = requestAnimationFrame(step);
+      }
+    }
+
+    // One-shot entry point: Celestial Dynamics galaxy view
+    function goGalaxy() {
+      applyTheme('galaxy');
+      galaxyArrange();
+    }
+
     // EXPERIMENTAL (?sim=1): live GPU relax of the perf-mode layout. Acquires
     // its own WebGPU device (the global gpuAvailable stays false — it gates
     // unrelated dormant paths), runs the existing GPUForceSimulation for a
@@ -5488,6 +5709,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       if (gpuSim) { gpuSim.dispose(); gpuSim = null; }
       if (_labelRAF) { cancelAnimationFrame(_labelRAF); _labelRAF = null; }
       if (clusterLabelRAF) { cancelAnimationFrame(clusterLabelRAF); clusterLabelRAF = null; }
+      if (_galaxyAnimRAF) { cancelAnimationFrame(_galaxyAnimRAF); _galaxyAnimRAF = null; }
+      removeStarfield();  // belongs to the old scene
       disposePerfScene(); // must run BEFORE Graph._destructor (uses Graph.scene())
       if (Graph && Graph._destructor) { try { Graph._destructor(); } catch (e) { console.warn('Graph teardown:', e); } }
       if (_css2dEl) { _css2dEl.remove(); _css2dEl = null; }
@@ -5748,6 +5971,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         initPerfPicking();
         if (PERF_SIM) perfRunLiveSim(nodes, edges); // fire-and-forget, bounded
       }
+      // If the galaxy theme is active, dress the fresh scene again (teardown
+      // removed the previous starfield with the old scene).
+      if (currentTheme === 'galaxy') ensureStarfield();
+      // ?galaxy=1 — open straight into the Celestial Dynamics galaxy view
+      if (new URLSearchParams(location.search).get('galaxy') === '1') setTimeout(goGalaxy, 400);
 
       // Set initial camera to the "H" recenter position (zoom out more for large graphs)
       Graph.cameraPosition({ x: 0, y: 0, z: perfMode ? perfBoundingRadius() * 1.9 : SCALE * 4 }, { x: 0, y: 0, z: 0 });
@@ -6154,6 +6382,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const next = names[(names.indexOf(currentTheme) + 1) % names.length];
       applyTheme(next);
     });
+
+    document.getElementById('galaxy-btn').addEventListener('click', () => goGalaxy());
 
     // (label-toggle and config panel removed from release build)
 
@@ -7542,12 +7772,16 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
             _lastFrameSrc = src;
             if (tasksLandmarker) {
               // Tasks path: one modern detector, full frame, GPU delegate.
-              const res = tasksLandmarker.detectForVideo(src, performance.now());
-              activeCrops = null;
-              ht_onResults({
-                multiHandLandmarks: res.landmarks || [],
-                multiHandedness: (res.handednesses || []).map(h => ({ score: (h && h[0] && h[0].score) || 1 })),
-              });
+              // try/catch: a single bad frame (e.g. zero-sized video during
+              // resize) must not kill the loop.
+              try {
+                const res = tasksLandmarker.detectForVideo(src, performance.now());
+                activeCrops = null;
+                ht_onResults({
+                  multiHandLandmarks: res.landmarks || [],
+                  multiHandedness: (res.handednesses || []).map(h => ({ score: (h && h[0] && h[0].score) || 1 })),
+                });
+              } catch (e) { /* skip frame */ }
             } else if (USE_POSE_CROP) {
               await mpPose.send({ image: src });
             } else {
