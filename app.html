@@ -7575,8 +7575,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // Self-tracking zoom+normalize for the Tasks path (?crop=0 disables):
     // last frame's landmarks → next frame's crop region.
     const TASKS_CROP = new URLSearchParams(location.search).get('crop') !== '0';
-    let tasksCropRegion = null; // {x,y,w,h} in source px, EMA-smoothed
-    let _tcFrame = 0;           // frame counter for periodic full-frame rescans
+    let tasksCropRegion = null; // {x,y,w,h} in source px, EMA-smoothed enhance region
     let tasksLandmarker = null;
     async function ht_initTasks() {
       const vision = await import('./vendor/mediapipe/tasks-vision/vision_bundle.mjs');
@@ -7646,10 +7645,17 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const HT_EQ_CLIP = 2.5;          // histogram clip factor (CLAHE-style)
       const _eqHist = new Uint32Array(256);
       const _eqLut = new Uint8Array(256);
-      function ht_equalizeCrop() {
-        const img = cropCtx.getImageData(0, 0, CROP_SZ, CROP_SZ);
+      // Generalized: equalize an arbitrary region of a 2d context in place.
+      function ht_equalizeRegion(ctx2d, rx, ry, rw, rh) {
+        const img = ctx2d.getImageData(rx, ry, rw, rh);
         const d = img.data;
-        const n = CROP_SZ * CROP_SZ;
+        const n = rw * rh;
+        return ht_equalizeImage(img, d, n, ctx2d, rx, ry);
+      }
+      function ht_equalizeCrop() {
+        return ht_equalizeRegion(cropCtx, 0, 0, CROP_SZ, CROP_SZ);
+      }
+      function ht_equalizeImage(img, d, n, outCtx, outX, outY) {
         _eqHist.fill(0);
         let sum = 0, sum2 = 0;
         for (let i = 0; i < d.length; i += 4) {
@@ -7683,7 +7689,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           d[i + 1] = Math.min(255, d[i + 1] * g);
           d[i + 2] = Math.min(255, d[i + 2] * g);
         }
-        cropCtx.putImageData(img, 0, 0);
+        outCtx.putImageData(img, outX, outY);
       }
 
       // Returns the (possibly filtered) frame to feed MediaPipe.
@@ -7865,41 +7871,27 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
             const src = ht_prepFrame();    // bright-background compensation
             _lastFrameSrc = src;
             if (tasksLandmarker) {
-              // Tasks path: modern detector, GPU delegate — with self-tracking
-              // zoom+normalize: the previous frame's landmarks give the hand
-              // region; we crop it (EMA-smoothed), CLAHE-equalize it, and feed
-              // THAT to the model. A lost frame falls back to full-frame
-              // re-acquisition automatically. ?crop=0 disables (A/B test).
+              // Tasks path: modern detector, GPU delegate — with LOCAL
+              // NORMALIZE (no zoom): the previous frame's landmarks give the
+              // hand region and we CLAHE-equalize that region IN PLACE on the
+              // full frame. The input geometry never changes — feeding actual
+              // crops alternated with full frames broke the VIDEO-mode
+              // tracker (the scene "teleported") and silently dropped the
+              // second hand. ?crop=0 disables the enhancement (A/B test).
               // try/catch: a single bad frame must not kill the loop.
               try {
-                let cropUsed = null;
                 let inputEl = src;
-                // Every N frames force a full-frame pass even while cropping:
-                // a second hand entering OUTSIDE the crop is invisible to it
-                // (tunnel vision) — the periodic rescan discovers it within
-                // ~0.3s and the union bbox then covers both hands.
-                _tcFrame++;
-                const fullScan = _tcFrame % 10 === 0;
-                if (TASKS_CROP && tasksCropRegion && !fullScan) {
-                  cropUsed = tasksCropRegion;
-                  cropCtx.clearRect(0, 0, CROP_SZ, CROP_SZ);
-                  cropCtx.drawImage(src,
-                    cropUsed.x, cropUsed.y, cropUsed.w, cropUsed.h,
-                    0, 0, CROP_SZ, CROP_SZ);
-                  ht_equalizeCrop(); // local contrast: expose for the hand
-                  inputEl = cropCanvas;
+                if (TASKS_CROP && tasksCropRegion) {
+                  if (src !== preCanvas) preCtx.drawImage(src, 0, 0, CAM_W, CAM_H);
+                  const r = tasksCropRegion;
+                  ht_equalizeRegion(preCtx,
+                    Math.max(0, Math.round(r.x)), Math.max(0, Math.round(r.y)),
+                    Math.min(CAM_W, Math.round(r.w)), Math.min(CAM_H, Math.round(r.h)));
+                  inputEl = preCanvas;
                 }
                 const res = tasksLandmarker.detectForVideo(inputEl, performance.now());
-                let lms = res.landmarks || [];
-                if (cropUsed) {
-                  // crop-space → full-frame normalized coords
-                  lms = lms.map(lm => lm.map(p => ({
-                    x: cropUsed.x / CAM_W + p.x * (cropUsed.w / CAM_W),
-                    y: cropUsed.y / CAM_H + p.y * (cropUsed.h / CAM_H),
-                    z: p.z,
-                  })));
-                }
-                // next-frame crop = union bbox of the hands, squared + margin
+                const lms = res.landmarks || [];
+                // next-frame enhance region = union bbox, squared + margin
                 if (lms.length) {
                   let minX = 1, minY = 1, maxX = 0, maxY = 0;
                   for (const lm of lms) for (const p of lm) {
