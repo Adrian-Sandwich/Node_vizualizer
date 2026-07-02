@@ -5726,6 +5726,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
                 const qualityLabel = document.querySelector('.quality-reduced-label');
                 if (qualityLabel) qualityLabel.style.display = 'block';
               }
+              // Perf mode: fill-rate is the killer at 365k translucent
+              // segments — draw only the first 40% of edges while struggling.
+              if (perfMode && perf && !perf._rangeCut) {
+                perf._rangeCut = true;
+                perf.lineGeo.setDrawRange(0, Math.floor(perf.edgeSrc.length * 0.4) * 2);
+              }
               fpsRecoveryFrames = 0;
             } else if (avgFps < 30) {
               if (qualityState !== 'reduced') {
@@ -5744,6 +5750,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
                 qualityState = 'normal';
                 if (VFX.bloomStrength) VFX.bloomStrength.val = userBloomStrength;
                 if (VFX.particleCount) VFX.particleCount.val = 30;
+                if (perfMode && perf && perf._rangeCut) {
+                  perf._rangeCut = false;
+                  perf.lineGeo.setDrawRange(0, Infinity); // restore all edges
+                }
                 Graph.refresh();
                 const qualityLabel = document.querySelector('.quality-reduced-label');
                 if (qualityLabel) qualityLabel.style.display = 'none';
@@ -7111,6 +7121,28 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       ht_setLabel('ROTATE');
     }
 
+    // ── MediaPipe Tasks HandLandmarker (2023 model, GPU delegate) ──────────
+    // Markedly more robust to lighting/background than the legacy @0.4
+    // solution. Loaded dynamically from vendor/; on ANY failure the legacy
+    // Pose→crop→Hands pipeline stays in charge (tasksLandmarker stays null).
+    const USE_TASKS_API = new URLSearchParams(location.search).get('legacy') !== '1';
+    let tasksLandmarker = null;
+    async function ht_initTasks() {
+      const vision = await import('./vendor/mediapipe/tasks-vision/vision_bundle.mjs');
+      const fileset = await vision.FilesetResolver.forVisionTasks('vendor/mediapipe/tasks-vision/wasm');
+      return vision.HandLandmarker.createFromOptions(fileset, {
+        baseOptions: {
+          modelAssetPath: 'vendor/mediapipe/tasks-vision/hand_landmarker.task',
+          delegate: 'GPU',   // internally falls back to CPU if WebGL is unavailable
+        },
+        runningMode: 'VIDEO',
+        numHands: 2,
+        minHandDetectionConfidence: 0.5,
+        minHandPresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+      });
+    }
+
     function ht_init() {
       const video = document.getElementById('ht-video');
       // 640×360 (was 320×180): 4× pixels → the palm detector can find hands at
@@ -7381,7 +7413,15 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           try {
             const src = ht_prepFrame();    // bright-background compensation
             _lastFrameSrc = src;
-            if (USE_POSE_CROP) {
+            if (tasksLandmarker) {
+              // Tasks path: one modern detector, full frame, GPU delegate.
+              const res = tasksLandmarker.detectForVideo(src, performance.now());
+              activeCrops = null;
+              ht_onResults({
+                multiHandLandmarks: res.landmarks || [],
+                multiHandedness: (res.handednesses || []).map(h => ({ score: (h && h[0] && h[0].score) || 1 })),
+              });
+            } else if (USE_POSE_CROP) {
               await mpPose.send({ image: src });
             } else {
               activeCrops = null;          // full-frame: landmarks need no remap
@@ -7392,6 +7432,17 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         width: CAM_W,
         height: CAM_H
       });
+      // Kick off the Tasks landmarker load; the legacy pipeline serves frames
+      // until it resolves, then the camera loop switches over seamlessly.
+      if (USE_TASKS_API) {
+        ht_initTasks().then(lm => {
+          tasksLandmarker = lm;
+          log('[ht_init] Tasks HandLandmarker active (GPU delegate)');
+        }).catch(err => {
+          console.warn('[ht_init] Tasks API failed — staying on legacy pipeline:', err);
+        });
+      }
+
       try {
         cam.start();
         log('[ht_init] Camera started successfully');
