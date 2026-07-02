@@ -1148,6 +1148,28 @@
       color: var(--text);
       border-color: #8a7bff;
     }
+    #bg-toggle {
+      position: fixed;
+      bottom: 20px;
+      right: 122px;
+      z-index: 10;
+      background: var(--bg-panel);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      padding: 8px 14px;
+      cursor: pointer;
+      transition: color 200ms ease, border-color 200ms ease;
+    }
+    #bg-toggle:hover {
+      color: var(--text);
+      border-color: var(--blue);
+    }
 
   </style>
 </head>
@@ -1344,6 +1366,7 @@
 
     <!-- Config Panel: bottom-right -->
     <button id="galaxy-btn" title="Celestial Dynamics — vista galaxia (G)">✦ GALAXY</button>
+    <button id="bg-toggle" title="Fondo blanco ↔ espacial (B)">◐ FONDO</button>
 
   </div><!-- /main -->
 
@@ -2044,6 +2067,7 @@
         isExternalGraph = true;
         externalGraphMeta = mapped.meta;
         CLUSTER_COLORS = mapped.clusterColors;
+        fileClusterColors = mapped.clusterColors.slice(); // keep the file's own palette for the light theme
         allNodes = mapped.nodes;
         edgeSets = { graph: mapped.edges };
         currentLayout = 'graph';
@@ -4641,6 +4665,12 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       } else if (key === 'g' && Graph) {
         // G: Celestial Dynamics galaxy view (theme + concentric re-arrange)
         goGalaxy();
+      } else if (key === 'b' && Graph) {
+        // B: fondo blanco ↔ espacial (light keeps the file's own palette)
+        toggleFondo();
+      } else if (key === 'e' && Graph) {
+        // E: edge density 100% → 60% → 30% (short edges first = cluster look)
+        cycleEdgeDensity();
       } else if (key === 'l' && Graph) {
         // L: toggle labels
         labelsVisible = !labelsVisible;
@@ -5692,6 +5722,37 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       }
     }
 
+    // Light ↔ space toggle (B / FONDO button). Light = white background with
+    // the GRAPH FILE's own domain palette (not the theme's monochrome);
+    // space = the galaxy theme + starfield.
+    let fileClusterColors = null;
+    function toggleFondo() {
+      if (currentTheme === 'galaxy') {
+        applyTheme('minimal');
+        if (fileClusterColors) {
+          CLUSTER_COLORS = fileClusterColors.slice();
+          if (perfMode && perf) perfRebuildBaseColors();
+        }
+      } else {
+        applyTheme('galaxy');
+      }
+    }
+
+    // Manual edge density (E): edges are length-sorted, so lower densities
+    // keep the short intra-cluster edges and drop the long hairball ones —
+    // the same soft look the adaptive-quality mode produces under low fps,
+    // but on demand.
+    const EDGE_DENSITY_STEPS = [1.0, 0.6, 0.3];
+    let _edgeDensityIdx = 0;
+    function cycleEdgeDensity() {
+      if (!perfMode || !perf) return;
+      _edgeDensityIdx = (_edgeDensityIdx + 1) % EDGE_DENSITY_STEPS.length;
+      const f = EDGE_DENSITY_STEPS[_edgeDensityIdx];
+      perf.lineGeo.setDrawRange(0, Math.floor(perf.edgeSrc.length * f) * 2);
+      setBootStage(`ARISTAS // ${Math.round(f * 100)}%`, 'cortas primero · E cicla');
+      setTimeout(hideBootStatus, 1500);
+    }
+
     // G / GALAXY button: first press enters the galaxy view (theme + spiral),
     // each further press cycles the arrangement.
     const ARRANGE_CYCLE = ['spiral', 'original'];
@@ -6151,8 +6212,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
                 if (qualityLabel) qualityLabel.style.display = 'block';
               }
               // Perf mode: fill-rate is the killer at 365k translucent
-              // segments — draw only the first 40% of edges while struggling.
-              if (perfMode && perf && !perf._rangeCut) {
+              // segments — draw only the shortest 40% while struggling
+              // (unless the user's manual E density is already lower).
+              if (perfMode && perf && !perf._rangeCut && EDGE_DENSITY_STEPS[_edgeDensityIdx] > 0.4) {
                 perf._rangeCut = true;
                 perf.lineGeo.setDrawRange(0, Math.floor(perf.edgeSrc.length * 0.4) * 2);
               }
@@ -6176,7 +6238,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
                 if (VFX.particleCount) VFX.particleCount.val = 30;
                 if (perfMode && perf && perf._rangeCut) {
                   perf._rangeCut = false;
-                  perf.lineGeo.setDrawRange(0, Infinity); // restore all edges
+                  // restore to the user's manual density, not blindly to 100%
+                  const f = EDGE_DENSITY_STEPS[_edgeDensityIdx];
+                  perf.lineGeo.setDrawRange(0, f >= 1 ? Infinity : Math.floor(perf.edgeSrc.length * f) * 2);
                 }
                 Graph.refresh();
                 const qualityLabel = document.querySelector('.quality-reduced-label');
@@ -6476,6 +6540,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     // Toggle color theme
     document.getElementById('galaxy-btn').addEventListener('click', () => goGalaxy());
+    document.getElementById('bg-toggle').addEventListener('click', () => toggleFondo());
 
     // (label-toggle and config panel removed from release build)
 
