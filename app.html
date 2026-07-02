@@ -76,29 +76,47 @@
     /* ═══════════════════════════════════════════════
        Onboarding
        ═══════════════════════════════════════════════ */
+    /* Onboarding — Celestial Dynamics deep-space look (independent of theme) */
     #onboarding {
       position: fixed; inset: 0; z-index: 50;
-      background: var(--bg);
+      background: #02020a;
     }
     #ob-graph { position: absolute; inset: 0; }
+    /* cheap starfield: layered radial dots */
+    #onboarding::before {
+      content: ''; position: absolute; inset: 0; pointer-events: none;
+      background-image:
+        radial-gradient(1px 1px at 12% 20%, rgba(220,230,255,.9) 50%, transparent 51%),
+        radial-gradient(1px 1px at 78% 12%, rgba(180,200,255,.8) 50%, transparent 51%),
+        radial-gradient(1.5px 1.5px at 33% 68%, rgba(255,255,255,.9) 50%, transparent 51%),
+        radial-gradient(1px 1px at 62% 45%, rgba(165,180,255,.7) 50%, transparent 51%),
+        radial-gradient(1px 1px at 88% 74%, rgba(200,215,255,.8) 50%, transparent 51%),
+        radial-gradient(1.5px 1.5px at 45% 88%, rgba(255,240,250,.7) 50%, transparent 51%),
+        radial-gradient(1px 1px at 8% 85%, rgba(190,210,255,.6) 50%, transparent 51%),
+        radial-gradient(1px 1px at 92% 32%, rgba(255,255,255,.75) 50%, transparent 51%);
+      background-size: 520px 520px, 460px 460px, 610px 610px, 380px 380px,
+                       550px 550px, 490px 490px, 430px 430px, 570px 570px;
+    }
 
     #ob-hud {
       position: absolute; top: 40px; left: 50%; transform: translateX(-50%);
       text-align: center; font-family: var(--mono);
       display: flex; flex-direction: column; align-items: center; gap: 10px;
       pointer-events: none;
-      background: rgba(255,255,255,0.85); padding: 24px 48px; border: 1px solid var(--border);
+      background: rgba(7,7,22,0.85); padding: 24px 48px;
+      border: 1px solid #3d3d7a; border-radius: 2px;
+      backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
       transition: opacity 0.4s ease;
     }
-    #ob-step-counter { font-size: 12px; color: var(--text-dim); letter-spacing: .1em; }
+    #ob-step-counter { font-size: 12px; color: #7a86c9; letter-spacing: .1em; }
     #ob-icon         { font-size: 52px; line-height: 1; }
-    #ob-verb         { font-size: 28px; font-weight: 700; color: var(--text-bright);
+    #ob-verb         { font-size: 28px; font-weight: 700; color: #eef2ff;
                        letter-spacing: .12em; }
-    #ob-desc         { font-size: 13px; color: var(--text); max-width: 340px; line-height: 1.5; }
-    #ob-feedback     { font-size: 14px; color: #4caf50; font-weight: 700;
+    #ob-desc         { font-size: 13px; color: #c9d2ff; max-width: 340px; line-height: 1.5; }
+    #ob-feedback     { font-size: 14px; color: #66d9ff; font-weight: 700;
                        letter-spacing: .08em; min-height: 20px; }
 
-    #ob-hud.ob-hud--success { border-color: #4caf50; }
+    #ob-hud.ob-hud--success { border-color: #66d9ff; box-shadow: 0 0 18px rgba(102,217,255,.25); }
 
     /* Intro splash — large centered description before interaction */
     #ob-splash {
@@ -106,16 +124,20 @@
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       pointer-events: none;
       font-family: var(--mono); text-align: center;
+      background: rgba(2,2,10,0.72);
       opacity: 1; transition: opacity 0.6s ease;
     }
     #ob-splash.ob-splash--hidden { opacity: 0; pointer-events: none; }
-    #ob-splash-icon { font-size: 72px; margin-bottom: 16px; }
-    #ob-splash-verb { font-size: 42px; font-weight: 700; color: var(--text-bright);
-                      letter-spacing: .14em; margin-bottom: 12px; }
-    #ob-splash-desc { font-size: 18px; color: var(--text); max-width: 480px;
+    #ob-splash-icon { font-size: 72px; margin-bottom: 16px;
+                      filter: drop-shadow(0 0 14px rgba(138,123,255,.6)); }
+    #ob-splash-verb { font-size: 42px; font-weight: 700; color: #eef2ff;
+                      letter-spacing: .14em; margin-bottom: 12px;
+                      text-shadow: 0 0 22px rgba(102,217,255,.45); }
+    #ob-splash-desc { font-size: 18px; color: #c9d2ff; max-width: 480px;
                       line-height: 1.6; margin-bottom: 24px; }
     #ob-splash-hand { margin-bottom: 0; }
-    #ob-splash-hand svg { width: 120px; height: 120px; }
+    #ob-splash-hand svg { width: 120px; height: 120px;
+                          filter: drop-shadow(0 0 10px rgba(138,123,255,.5)); }
 
     /* Hand illustration in HUD (small, persistent during step) */
     #ob-hand-icon { margin-top: 4px; }
@@ -127,20 +149,20 @@
     }
     .ob-dot {
       width: 8px; height: 8px; border-radius: 50%;
-      background: rgba(180,180,180,0.4); transition: background .3s;
+      background: rgba(122,134,201,0.35); transition: background .3s, box-shadow .3s;
     }
-    .ob-dot--active  { background: var(--border); }
-    .ob-dot--done    { background: #4caf50; }
+    .ob-dot--active  { background: #8a7bff; box-shadow: 0 0 8px rgba(138,123,255,.7); }
+    .ob-dot--done    { background: #66d9ff; }
 
     #ob-skip {
       position: absolute; bottom: 36px; right: 48px; z-index: 70;
       font-family: var(--mono); font-size: 13px; font-weight: 600;
-      letter-spacing: .08em; color: var(--text-dim);
-      background: rgba(255,255,255,0.7); border: 1px solid var(--border);
+      letter-spacing: .08em; color: #7a86c9;
+      background: rgba(7,7,22,0.8); border: 1px solid #3d3d7a;
       padding: 10px 28px; cursor: pointer;
       transition: color 0.2s, border-color 0.2s;
     }
-    #ob-skip:hover { color: var(--text-bright); border-color: var(--text-bright); }
+    #ob-skip:hover { color: #eef2ff; border-color: #8a7bff; }
 
     /* ═══════════════════════════════════════════════
        Setup Screen
@@ -6556,15 +6578,16 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     // Onboarding steps
     const OB_STEPS = [
-      { id:'palm',  icon:'✋', verb:'ROTAR',    desc:'Mueve tu mano frente a la cámara de lado a lado. El grafo 3D girará siguiendo tu mano.' },
-      { id:'point', icon:'☝️', verb:'EXPLORAR', desc:'Extiende solo el dedo índice (los demás cerrados) y apunta hacia un nodo. Mantén el dedo apuntando sobre el nodo hasta que se seleccione.' },
-      { id:'zoom',  icon:'🤲', verb:'ZOOM',     desc:'Levanta ambas manos frente a la cámara. Acerca las manos para hacer zoom in, o aléjalas para zoom out.' },
-      { id:'peace', icon:'✌️', verb:'RESET',    desc:'Extiende el índice y medio (gesto de paz/victoria) y sostenlo para reiniciar la vista de la cámara.' },
+      { id:'palm',  icon:'✋', verb:'ROTAR',      desc:'Mueve tu mano abierta de lado a lado: la galaxia gira contigo. Si hay un nodo seleccionado, orbitas alrededor de él.' },
+      { id:'point', icon:'☝️', verb:'EXPLORAR',   desc:'Extiende el índice: un cursor sigue tu dedo sobre el grafo. Acércalo a un nodo — se engancha solo. Mantente sobre él un instante para seleccionarlo.' },
+      { id:'pinch', icon:'🤏', verb:'SELECCIONAR', desc:'Con el cursor sobre un nodo, junta índice y pulgar (pinch): selección instantánea, sin esperar.' },
+      { id:'zoom',  icon:'🤲', verb:'ZOOM',       desc:'Levanta ambas manos frente a la cámara. Acércalas para zoom in, aléjalas para zoom out.' },
+      { id:'peace', icon:'✌️', verb:'RESET',      desc:'Índice y medio extendidos (paz ✌️) y sostén: la vista regresa a la galaxia completa.' },
     ];
 
     // SVG hand illustrations for each onboarding step
     const OB_HAND_SVG = {
-      palm: `<svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" color="#555555">
+      palm: `<svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" color="#a5b4ff">
         <path d="M50 95 L50 55"/>
         <path d="M42 95 L42 60 L42 28 Q42 22 46 22 Q50 22 50 28 L50 55"/>
         <path d="M50 28 L50 18 Q50 12 54 12 Q58 12 58 18 L58 55"/>
@@ -6573,7 +6596,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         <path d="M42 60 L42 38 Q42 32 38 32 Q34 32 34 38 L34 60 Q34 78 50 82 Q66 78 74 58"/>
         <circle cx="50" cy="55" r="26" stroke-dasharray="4 3" opacity="0.3"/>
       </svg>`,
-      point: `<svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" color="#555555">
+      point: `<svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" color="#a5b4ff">
         <path d="M50 95 L50 58"/>
         <path d="M50 58 L50 10 Q50 5 54 5 Q58 5 58 10 L58 55" stroke-width="2.5"/>
         <path d="M58 58 L58 48 Q58 44 62 46 Q64 48 62 52 L58 58"/>
@@ -6582,7 +6605,15 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         <line x1="50" y1="5" x2="50" y2="-2" stroke-dasharray="3 2" opacity="0.5"/>
         <path d="M44 0 L50 -5 L56 0" fill="none" opacity="0.5"/>
       </svg>`,
-      zoom: `<svg viewBox="0 0 120 100" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" color="#555555">
+      pinch: `<svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" color="#a5b4ff">
+        <path d="M50 95 L50 62"/>
+        <path d="M46 62 Q38 58 36 48 Q35 40 42 36 Q48 33 52 40 L56 47"/>
+        <path d="M56 47 Q60 40 66 43 Q72 46 68 54 Q64 60 56 60"/>
+        <circle cx="53" cy="45" r="4" stroke-dasharray="2 2" opacity="0.6"/>
+        <path d="M42 66 Q40 74 50 80 Q60 76 62 66"/>
+        <path d="M30 30 L36 36 M70 28 L64 34" opacity="0.5"/>
+      </svg>`,
+      zoom: `<svg viewBox="0 0 120 100" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" color="#a5b4ff">
         <g transform="translate(10,10)">
           <path d="M22 80 L22 40 L22 18 Q22 12 26 12 Q30 12 30 18 L30 40"/>
           <path d="M30 18 Q30 12 34 12 Q38 12 38 18 L38 40"/>
@@ -6598,7 +6629,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         <path d="M52 50 L58 50 M55 47 L58 50 L55 53" opacity="0.5"/>
         <path d="M68 50 L62 50 M65 47 L62 50 L65 53" opacity="0.5"/>
       </svg>`,
-      fist: `<svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" color="#555555">
+      fist: `<svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" color="#a5b4ff">
         <path d="M50 95 L50 70"/>
         <path d="M34 50 Q34 42 40 42 L60 42 Q66 42 66 50 L66 62 Q66 76 50 80 Q34 76 34 62 Z"/>
         <path d="M40 42 L40 38 Q40 34 44 34 Q48 34 48 38"/>
@@ -6611,6 +6642,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     };
     let obStep = 0;
     let ob_stepLocked = false;
+    let ob_pinchWas = false; // pinch-step hysteresis
 
     // Mock graph data
     const OB_MOCK_NODES = [
@@ -6666,11 +6698,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         (document.getElementById('ob-graph'))
         .graphData({ nodes: OB_MOCK_NODES, links: OB_MOCK_LINKS })
         .nodeLabel('name')
-        .nodeColor(() => '#333333')
+        .nodeColor(n => ['#66d9ff', '#7b8cff', '#b07bff', '#ff7bd5', '#a5f3ff', '#8a7bff'][parseInt(n.id.slice(1)) % 6])
         .nodeVal(8)
-        .linkColor(() => 'rgba(150,150,150,0.4)')
+        .linkColor(() => 'rgba(123,140,255,0.45)')
         .linkWidth(1)
-        .backgroundColor('#ffffff')
+        .backgroundColor('#02020a')
         .width(window.innerWidth)
         .height(window.innerHeight);
       ob_camR = 500; ob_camPhi = 0; ob_camTheta = Math.PI / 2;
@@ -6738,7 +6770,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           ob_hoverNode = null; ob_candidateNode = null; ob_candidateFrames = 0;
           ob_pointFrames = 0;
           ob_zoomTotal = 0; ob_twoHandPrevDist = null; ob_zoomCooldown = 0;
-          ob_fistFrames = 0;
+          ob_fistFrames = 0; ob_pinchWas = false;
           showObSplash(obStep, () => { ob_stepLocked = false; });
         }
       }, 900);
@@ -6848,8 +6880,35 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         return;
       }
 
-      // ── Step 2 — zoom: accumulate real distance change ────────────────
+      // ── Step 2 — pinch: hover a node, then close index+thumb ──────────
       if (obStep === 2) {
+        if (ObGraph && lm) {
+          const fx = 1 - lm[8].x;
+          const fy = lm[8].y;
+          const sx = fx * window.innerWidth;
+          const sy = fy * window.innerHeight;
+          let best = null, bestD = Infinity;
+          ObGraph.graphData().nodes.forEach(n => {
+            const sc = ObGraph.graph2ScreenCoords(n.x, n.y, n.z);
+            const d = Math.hypot(sc.x - sx, sc.y - sy);
+            if (d < bestD) { bestD = d; best = n; }
+          });
+          const near = bestD < 120 ? best : null;
+          const hs = Math.hypot(lm[9].x - lm[0].x, lm[9].y - lm[0].y) || 1e-6;
+          const pinchD = Math.hypot(lm[8].x - lm[4].x, lm[8].y - lm[4].y) / hs;
+          if (ob_pinchWas) {
+            if (pinchD > HT_PINCH_EXIT) ob_pinchWas = false;
+          } else if (pinchD < HT_PINCH_ENTER) {
+            ob_pinchWas = true;
+            if (near) { advanceObStep(); return; }
+          }
+          fbEl.textContent = near ? ('→ ' + near.name + ' · JUNTA ÍNDICE + PULGAR 🤏') : 'APUNTA A UN NODO';
+        }
+        return;
+      }
+
+      // ── Step 3 — zoom: accumulate real distance change ────────────────
+      if (obStep === 3) {
         if (hands.length >= 2) {
           const a = hands[0][9], b = hands[1][9];
           const dist = Math.hypot(b.x - a.x, b.y - a.y);
@@ -6874,8 +6933,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         return;
       }
 
-      // ── Step 3 — peace: hold to reset ─────────────────────────────────
-      if (obStep === 3) {
+      // ── Step 4 — peace: hold to reset ─────────────────────────────────
+      if (obStep === 4) {
         if (gesture === 'peace') {
           ob_fistFrames++;
           const pct = Math.min(1, ob_fistFrames / OB_FIST_FRAMES);
@@ -8113,6 +8172,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       <span class="ob-dot" data-i="1"></span>
       <span class="ob-dot" data-i="2"></span>
       <span class="ob-dot" data-i="3"></span>
+      <span class="ob-dot" data-i="4"></span>
     </div>
     <button id="ob-skip">SKIP</button>
   </div>
