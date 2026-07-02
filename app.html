@@ -5401,20 +5401,30 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const nbrs = selectedNode ? (neighborSets[selectedNode.id] || new Set()) : null;
       const selIdx = selectedNode ? perf.idToIndex.get(selectedNode.id) : -1;
       const col = new THREE.Color();
-      const DIM = 0.82;
+      // "Transparency" for non-neighbors: InstancedMesh has no per-instance
+      // opacity, so we fake it — blend the color toward the BACKGROUND (reads
+      // as translucency on any solid bg) and shrink the instance (kills the
+      // occlusion a big dark blob would cause).
+      const FADE = 0.88;       // 0..1 — how far non-neighbor colors sink into the bg
+      const SHRINK = 0.45;     // non-neighbor scale factor while a selection is active
+      const bg = new THREE.Color(VFX.bgColor.val);
 
       const nodeVisible = new Uint8Array(perf.nodes.length);
       perf.nodes.forEach((node, i) => {
         const hidden = hiddenTags.has(String(node.cluster_id));
         nodeVisible[i] = hidden ? 0 : 1;
-        // scale: 0 hides; restore base otherwise (keeps hover scale coherent)
         const baseS = node.is_medoid ? 5 : 3;
-        perf.scales[i] = hidden ? 0 : baseS;
+        const dimmed = nbrs && i !== selIdx && !nbrs.has(node.id);
+        // scale: 0 hides; dimmed nodes shrink (perf.scales feeds picking and
+        // hover-restore, so keep the visual scale there)
+        perf.scales[i] = hidden ? 0 : (dimmed ? baseS * SHRINK : baseS);
         perfSetInstanceScale(i, i === selIdx ? baseS * 2 : perf.scales[i]);
 
         let r = perf.baseColors[i * 3], g = perf.baseColors[i * 3 + 1], b = perf.baseColors[i * 3 + 2];
-        if (nbrs && i !== selIdx && !nbrs.has(node.id)) {
-          r *= (1 - DIM); g *= (1 - DIM); b *= (1 - DIM);
+        if (dimmed) {
+          r = r * (1 - FADE) + bg.r * FADE;
+          g = g * (1 - FADE) + bg.g * FADE;
+          b = b * (1 - FADE) + bg.b * FADE;
         }
         col.setRGB(r, g, b);
         perf.mesh.setColorAt(i, col);
@@ -5444,12 +5454,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           }
         }
         const incident = selIdx >= 0 && (si === selIdx || ti === selIdx);
-        const f = (nbrs && !incident) ? (1 - DIM) : 1;
+        // non-incident edges sink almost fully into the background (edge
+        // "transparency" — vertex colors are vec3, so blend instead of alpha)
+        const f = (nbrs && !incident) ? 0.06 : 1;
         for (let v = 0; v < 2; v++) {
           const ni = v === 0 ? si : ti;
-          perf.lineCol[i * 6 + v * 3]     = perf.baseColors[ni * 3] * 255 * f;
-          perf.lineCol[i * 6 + v * 3 + 1] = perf.baseColors[ni * 3 + 1] * 255 * f;
-          perf.lineCol[i * 6 + v * 3 + 2] = perf.baseColors[ni * 3 + 2] * 255 * f;
+          perf.lineCol[i * 6 + v * 3]     = (perf.baseColors[ni * 3] * f + bg.r * (1 - f)) * 255;
+          perf.lineCol[i * 6 + v * 3 + 1] = (perf.baseColors[ni * 3 + 1] * f + bg.g * (1 - f)) * 255;
+          perf.lineCol[i * 6 + v * 3 + 2] = (perf.baseColors[ni * 3 + 2] * f + bg.b * (1 - f)) * 255;
         }
       }
       pos.needsUpdate = true;
