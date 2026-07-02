@@ -7576,6 +7576,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // last frame's landmarks → next frame's crop region.
     const TASKS_CROP = new URLSearchParams(location.search).get('crop') !== '0';
     let tasksCropRegion = null; // {x,y,w,h} in source px, EMA-smoothed
+    let _tcFrame = 0;           // frame counter for periodic full-frame rescans
     let tasksLandmarker = null;
     async function ht_initTasks() {
       const vision = await import('./vendor/mediapipe/tasks-vision/vision_bundle.mjs');
@@ -7873,7 +7874,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
               try {
                 let cropUsed = null;
                 let inputEl = src;
-                if (TASKS_CROP && tasksCropRegion) {
+                // Every N frames force a full-frame pass even while cropping:
+                // a second hand entering OUTSIDE the crop is invisible to it
+                // (tunnel vision) — the periodic rescan discovers it within
+                // ~0.3s and the union bbox then covers both hands.
+                _tcFrame++;
+                const fullScan = _tcFrame % 10 === 0;
+                if (TASKS_CROP && tasksCropRegion && !fullScan) {
                   cropUsed = tasksCropRegion;
                   cropCtx.clearRect(0, 0, CROP_SZ, CROP_SZ);
                   cropCtx.drawImage(src,
