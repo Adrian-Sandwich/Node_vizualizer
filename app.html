@@ -4022,6 +4022,8 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
 
     function handleNodeClick(node) {
       selectedNode = node;
+      // Hand navigation now orbits around the selected node
+      ht_setOrbitCenter(node.x || 0, node.y || 0, node.z || 0);
       // Reset nav stack when clicking from 3D graph (fresh navigation)
       dcNavStack.length = 0;
       showDetailCard(node);
@@ -4440,6 +4442,8 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       selectedNode = null;
       dcNavStack.length = 0;
       dcMgHitAreas = [];
+      // Deselect → hand navigation orbits the whole graph again
+      ht_setOrbitCenter(0, 0, 0);
       // Perf mode: node/edge colors live in instanced buffers — repaint them
       // or the neighbor-dim from the previous selection sticks forever.
       if (perfMode) perfApplyHighlight();
@@ -6548,8 +6552,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // Fist-pause system
     let htPaused            = false;  // hand tracking paused?
     let htPauseFistFrames   = 0;      // frames fist held for pause toggle
-    const HT_PAUSE_FRAMES   = 15;    // ~500ms at 30fps to enable pause
-    const HT_UNPAUSE_FRAMES = 45;    // ~1500ms at 30fps to disable pause (3x longer)
+    const HT_PAUSE_FRAMES   = 45;    // ~1.5s at 30fps to enable pause — long on purpose: a brief accidental fist must NOT lock the controls
+    const HT_UNPAUSE_FRAMES = 45;    // same duration to unlock (symmetric feel)
     const HT_ZOOM_COOLDOWN  = 10;   // ~330ms grace period after zoom
 
     // Fist-still detection for reset
@@ -6632,6 +6636,27 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       return Math.max(SCALE * 1.5, radius * 1.5);
     }
 
+    // Orbit center for hand navigation: the origin normally, the selected
+    // node after a select — so palm-rotate/zoom orbit AROUND the selection
+    // instead of snapping back to the global view.
+    const ht_orbitCenter = { x: 0, y: 0, z: 0 };
+    function ht_setOrbitCenter(x, y, z) {
+      ht_orbitCenter.x = x; ht_orbitCenter.y = y; ht_orbitCenter.z = z;
+    }
+    // Re-sync spherical coords from the CURRENT camera relative to the orbit
+    // center. Called on the first rotation frame after any other gesture or
+    // camera fly, so rotation always continues from where the camera is.
+    function ht_syncSpherical() {
+      if (!Graph) return;
+      const p = Graph.camera().position;
+      const rx = p.x - ht_orbitCenter.x;
+      const ry = p.y - ht_orbitCenter.y;
+      const rz = p.z - ht_orbitCenter.z;
+      ht_camR = Math.max(1, Math.hypot(rx, ry, rz));
+      ht_camTheta = Math.acos(Math.max(-1, Math.min(1, ry / ht_camR)));
+      ht_camPhi = Math.atan2(rx, rz);
+    }
+
     function ht_updateCamera() {
       if (!Graph) return;
       const sinT = Math.sin(ht_camTheta);
@@ -6639,8 +6664,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const sinP = Math.sin(ht_camPhi);
       const cosP = Math.cos(ht_camPhi);
       Graph.cameraPosition(
-        { x: ht_camR * sinT * sinP, y: ht_camR * cosT, z: ht_camR * sinT * cosP },
-        { x: 0, y: 0, z: 0 },
+        { x: ht_orbitCenter.x + ht_camR * sinT * sinP,
+          y: ht_orbitCenter.y + ht_camR * cosT,
+          z: ht_orbitCenter.z + ht_camR * sinT * cosP },
+        ht_orbitCenter,
         0
       );
     }
@@ -7196,6 +7223,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       // ── Any gesture (palm/fist-moving/other) → rotate ─────────────────────
       // Cancel inertia — user is taking control
       if (ht_inertiaRAF) { cancelAnimationFrame(ht_inertiaRAF); ht_inertiaRAF = null; }
+      if (ht_prevX === null) {
+        // First rotation frame after another gesture / camera fly: pick up
+        // the camera where it IS (relative to the orbit center) instead of
+        // snapping back to the stale spherical coords.
+        ht_syncSpherical();
+      }
       if (ht_prevX !== null) {
         const dx = px - ht_prevX;
         const dy = py - ht_prevY;
