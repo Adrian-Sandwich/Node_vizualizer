@@ -5396,8 +5396,22 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       } catch (e) { console.warn('[perfSim] no WebGPU device:', e); return; }
       if (!perf) return; // graph got torn down while we awaited
       gpuSim = new GPUForceSimulation(device, nodes, edges, currentLayout, SCALE);
+      // CRITICAL: the constructor fills the position-force target buffer with
+      // ZEROS — the default positionStrength (0.18) then yanks all 36k nodes
+      // into the origin within a few ticks (graph "disappears"), where the
+      // unclamped charge force explodes to NaN. Anchor the targets to the
+      // baked layout and keep the anchor weak: charge+link relax locally
+      // while the galaxy keeps its global shape.
+      const tgt = new Float32Array(nodes.length * 4);
+      nodes.forEach((n, i) => {
+        tgt[i * 4] = n.x || 0;
+        tgt[i * 4 + 1] = n.y || 0;
+        tgt[i * 4 + 2] = n.z || 0;
+      });
+      device.queue.writeBuffer(gpuSim.targetBuffer, 0, tgt);
+      gpuSim.params.positionStrength = 0.03;
       gpuSim.setChargeStrength(-6);
-      gpuSim.setLinkStrength(0.015, 60);
+      gpuSim.setLinkStrength(0.015, 60); // also flushes positionStrength via _writeParams
       const m4 = new THREE.Matrix4();
       const MAX_TICKS = 240;
       let ticks = 0;
