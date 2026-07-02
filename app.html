@@ -5299,6 +5299,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       perf = { mesh, lines, sphereGeo, nodeMat, lineGeo, lineMat,
                positions, baseColors, scales, linePos, lineCol,
                edgeSrc, edgeDst, nodes, edges: orderedEdges, idToIndex,
+               origPositions: positions.slice(), // for ARRANGE // ORIGINAL
                handlers: {}, hoverIdx: -1 };
     }
 
@@ -5571,27 +5572,41 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       perfApplyHighlight();
     }
 
-    // Animate the graph into the concentric galaxy arrangement from wherever
-    // the nodes currently are. Works in both perf and normal modes.
-    function galaxyArrange(duration = 2200) {
+    // Animate the graph between arrangements from wherever the nodes are.
+    // Modes: 'spiral' (galaxy arms) · 'sphere' (concentric radial disc) ·
+    // 'original' (positions as loaded). Works in perf and normal modes.
+    function galaxyArrange(mode = 'spiral', duration = 2200) {
       if (_galaxyAnimRAF) { cancelAnimationFrame(_galaxyAnimRAF); _galaxyAnimRAF = null; }
       const ease = t => 1 - Math.pow(1 - t, 3);
       if (perfMode && perf) {
         const n = perf.nodes.length;
         const start = perf.positions.slice();
-        computeSpiralGalaxyLayout(perf.nodes, perf.edges); // writes target x,y,z
         const target = new Float32Array(n * 3);
+        if (mode === 'original') {
+          target.set(perf.origPositions);
+          perf.nodes.forEach((nd, i) => {
+            nd.x = target[i * 3]; nd.y = target[i * 3 + 1]; nd.z = target[i * 3 + 2];
+          });
+        } else {
+          if (mode === 'sphere') computeFallbackLayout(perf.nodes, perf.edges);
+          else computeSpiralGalaxyLayout(perf.nodes, perf.edges);
+          perf.nodes.forEach((nd, i) => {
+            target[i * 3] = nd.x; target[i * 3 + 1] = nd.y; target[i * 3 + 2] = nd.z;
+          });
+        }
         let maxR2 = 0;
-        perf.nodes.forEach((nd, i) => {
-          target[i * 3] = nd.x; target[i * 3 + 1] = nd.y; target[i * 3 + 2] = nd.z;
-          const r2 = nd.x * nd.x + nd.y * nd.y + nd.z * nd.z;
+        for (let k = 0; k < n * 3; k += 3) {
+          const r2 = target[k] * target[k] + target[k + 1] * target[k + 1] + target[k + 2] * target[k + 2];
           if (r2 > maxR2) maxR2 = r2;
-        });
+        }
         // frame the incoming arrangement while it animates — tilted overhead
-        // view so the spiral reads as a galaxy (edge-on it's just a line)
+        // for the discs (edge-on they're just a line), frontal for original
         ht_setOrbitCenter(0, 0, 0);
-        const fr = Math.sqrt(maxR2);
-        Graph.cameraPosition({ x: 0, y: fr * 1.7, z: fr * 1.15 }, { x: 0, y: 0, z: 0 }, duration);
+        const fr = Math.sqrt(maxR2) || SCALE * 4;
+        const camTo = mode === 'original'
+          ? { x: 0, y: 0, z: fr * 1.9 }
+          : { x: 0, y: fr * 1.7, z: fr * 1.15 };
+        Graph.cameraPosition(camTo, { x: 0, y: 0, z: 0 }, duration);
         const m4 = new THREE.Matrix4();
         const t0 = performance.now();
         const step = () => {
@@ -5631,12 +5646,21 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       } else if (Graph) {
         const nodes = Graph.graphData().nodes;
         if (!nodes.length) return;
+        if (mode === 'original') {
+          // release the pins and let d3 re-settle the graph naturally
+          nodes.forEach(nd => { nd.fx = undefined; nd.fy = undefined; nd.fz = undefined; });
+          Graph.d3ReheatSimulation();
+          ht_setOrbitCenter(0, 0, 0);
+          Graph.cameraPosition({ x: 0, y: 0, z: SCALE * 4 }, { x: 0, y: 0, z: 0 }, duration);
+          return;
+        }
         const start = nodes.map(nd => [nd.x || 0, nd.y || 0, nd.z || 0]);
         const links = Graph.graphData().links.map(l => ({
           source: typeof l.source === 'object' ? l.source.id : l.source,
           target: typeof l.target === 'object' ? l.target.id : l.target,
         }));
-        computeSpiralGalaxyLayout(nodes, links, SCALE * 4);
+        if (mode === 'sphere') computeFallbackLayout(nodes, links, SCALE * 4);
+        else computeSpiralGalaxyLayout(nodes, links, SCALE * 4);
         const target = nodes.map(nd => [nd.x, nd.y, nd.z]);
         ht_setOrbitCenter(0, 0, 0);
         Graph.cameraPosition({ x: 0, y: SCALE * 4 * 1.7, z: SCALE * 4 * 1.15 }, { x: 0, y: 0, z: 0 }, duration);
@@ -5657,10 +5681,19 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       }
     }
 
-    // One-shot entry point: Celestial Dynamics galaxy view
+    // G / GALAXY button: first press enters the galaxy view (theme + spiral),
+    // each further press cycles the arrangement.
+    const ARRANGE_CYCLE = ['spiral', 'sphere', 'original'];
+    let _arrangeIdx = -1;
     function goGalaxy() {
-      applyTheme('galaxy');
-      galaxyArrange();
+      if (currentTheme !== 'galaxy') applyTheme('galaxy');
+      _arrangeIdx = (_arrangeIdx + 1) % ARRANGE_CYCLE.length;
+      const mode = ARRANGE_CYCLE[_arrangeIdx];
+      galaxyArrange(mode);
+      setBootStage(`ARRANGE // ${mode.toUpperCase()}`, 'G cycles: spiral → sphere → original');
+      setTimeout(hideBootStatus, 1800);
+      const btn = document.getElementById('galaxy-btn');
+      if (btn) btn.textContent = `✦ ${mode.toUpperCase()}`;
     }
 
     // EXPERIMENTAL (?sim=1): live GPU relax of the perf-mode layout. Acquires
@@ -5761,6 +5794,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       if (_labelRAF) { cancelAnimationFrame(_labelRAF); _labelRAF = null; }
       if (clusterLabelRAF) { cancelAnimationFrame(clusterLabelRAF); clusterLabelRAF = null; }
       if (_galaxyAnimRAF) { cancelAnimationFrame(_galaxyAnimRAF); _galaxyAnimRAF = null; }
+      _arrangeIdx = -1; // fresh graph → next G starts at spiral
+      const _gbtn = document.getElementById('galaxy-btn');
+      if (_gbtn) _gbtn.textContent = '✦ GALAXY';
       removeStarfield();  // belongs to the old scene
       disposePerfScene(); // must run BEFORE Graph._destructor (uses Graph.scene())
       if (Graph && Graph._destructor) { try { Graph._destructor(); } catch (e) { console.warn('Graph teardown:', e); } }
