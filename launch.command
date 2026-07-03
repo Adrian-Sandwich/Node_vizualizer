@@ -18,6 +18,14 @@ if [ ! -x "$CHROME" ]; then
   exit 1
 fi
 
+# A GPU-crashed instance of the dedicated profile survives its window and
+# keeps the profile lock — new launches attach to it and open blank pages.
+# Kill any lingering instance so every launch starts clean.
+if pgrep -f "nodeviz-chrome-profile" >/dev/null; then
+  pkill -f "nodeviz-chrome-profile"
+  sleep 1
+fi
+
 open -na "Google Chrome" --args \
   --allow-file-access-from-files \
   --user-data-dir="$HOME/.nodeviz-chrome-profile" \
