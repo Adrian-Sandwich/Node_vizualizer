@@ -6563,7 +6563,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     function goGalaxy() {
       if (currentTheme !== 'galaxy') applyTheme('galaxy');
       // relax (GPU physics settle) only exists on the perf path
-      const cycle = (perfMode && perf) ? ['spiral', 'original', 'relax']
+      const cycle = (perfMode && perf) ? ['spiral', 'relax']
                                        : ['spiral', 'original'];
       _arrangeIdx = (_arrangeIdx + 1) % cycle.length;
       const mode = cycle[_arrangeIdx];
@@ -6574,7 +6574,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         setBootStage('ARRANGE // ESFÉRICO', 'física GPU (Barnes-Hut) hasta asentar');
       } else {
         galaxyArrange(mode);
-        setBootStage(`ARRANGE // ${ARRANGE_LABEL[mode]}`, 'G cicla: espiral → original → esférico');
+        setBootStage(`ARRANGE // ${ARRANGE_LABEL[mode]}`, 'G alterna: espiral ↔ esférico');
       }
       setTimeout(hideBootStatus, 1800);
       const btn = document.getElementById('galaxy-btn');
