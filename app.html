@@ -4681,9 +4681,9 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         e.preventDefault();
         dcNavigateBack();
       } else if (key === 'h' && Graph) {
-        // H: reset camera (perf mode frames the instanced scene's bounds)
-        const hz = perfMode ? perfBoundingRadius() * 1.9 : SCALE * 4;
-        Graph.cameraPosition({ x: 0, y: 0, z: hz }, { x: 0, y: 0, z: 0 }, 1000);
+        // H: reset camera (perf mode frames by the scene's actual shape)
+        if (perfMode) perfFrameCamera(1000);
+        else Graph.cameraPosition({ x: 0, y: 0, z: SCALE * 4 }, { x: 0, y: 0, z: 0 }, 1000);
       } else if (key === 'g' && Graph) {
         // G: Celestial Dynamics galaxy view (theme + concentric re-arrange)
         goGalaxy();
@@ -5201,18 +5201,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       for (let i = 0; i < n; i++) if (deg[i] > maxDeg) maxDeg = deg[i];
       const rMin = radius * 0.06, rMax = radius;
       const logMax = Math.log1p(maxDeg);
-      // blend log-degree with degree rank so uniform-degree graphs (trees)
-      // fill the disc instead of collapsing onto one shell (see spiral)
-      const rankN = new Float64Array(n);
-      {
-        const order = Array.from({ length: n }, (_, i) => i)
-          .sort((a, b) => deg[b] - deg[a]);
-        for (let r = 0; r < n; r++) rankN[order[r]] = (r + 0.5) / n;
-      }
       const radii = new Float64Array(n);
       for (let i = 0; i < n; i++) {
-        const t = 0.6 * (1 - Math.log1p(deg[i]) / logMax) + 0.4 * rankN[i];
-        radii[i] = rMin + t * (rMax - rMin);
+        radii[i] = rMin + (1 - Math.log1p(deg[i]) / logMax) * (rMax - rMin);
       }
 
       // initial directions: domain sectors, fibonacci spread inside each
@@ -5259,6 +5250,28 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         nodes[i].y = dirs[i * 3 + 1] * radii[i] * 0.45; // flatten → disc
         nodes[i].z = dirs[i * 3 + 2] * radii[i];
       }
+    }
+
+    // Frame the perf scene from its actual shape: flat/disc layouts get the
+    // tilted overhead view (edge-on they collapse into a line — this is how
+    // baked radial files looked "aplastados" at load), volumetric ones frontal.
+    function perfFrameCamera(duration = 0) {
+      if (!perf || !Graph) return;
+      let maxY = 0, maxXZ = 0, maxR2 = 0;
+      const p = perf.positions;
+      for (let i = 0; i < p.length; i += 3) {
+        const ay = Math.abs(p[i + 1]);
+        const xz = Math.hypot(p[i], p[i + 2]);
+        if (ay > maxY) maxY = ay;
+        if (xz > maxXZ) maxXZ = xz;
+        const r2 = p[i] * p[i] + p[i + 1] * p[i + 1] + p[i + 2] * p[i + 2];
+        if (r2 > maxR2) maxR2 = r2;
+      }
+      const fr = Math.sqrt(maxR2) || SCALE * 4;
+      const camTo = maxY < maxXZ * 0.55
+        ? { x: 0, y: fr * 1.7, z: fr * 1.15 }   // tilted overhead for discs
+        : { x: 0, y: 0, z: fr * 1.9 };          // frontal for blobs
+      Graph.cameraPosition(camTo, { x: 0, y: 0, z: 0 }, duration);
     }
 
     function perfBoundingRadius() {
@@ -6218,8 +6231,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       // ?galaxy=1 — open straight into the Celestial Dynamics galaxy view
       if (new URLSearchParams(location.search).get('galaxy') === '1') setTimeout(goGalaxy, 400);
 
-      // Set initial camera to the "H" recenter position (zoom out more for large graphs)
-      Graph.cameraPosition({ x: 0, y: 0, z: perfMode ? perfBoundingRadius() * 1.9 : SCALE * 4 }, { x: 0, y: 0, z: 0 });
+      // Set initial camera (perf mode frames by the scene's actual shape)
+      if (perfMode) perfFrameCamera(0);
+      else Graph.cameraPosition({ x: 0, y: 0, z: SCALE * 4 }, { x: 0, y: 0, z: 0 });
 
       // Pre-calculate optimal hand-tracking zoom based on graph size
       if (!ht_initialZoomCalculated && appState !== 'onboarding') {
@@ -7710,8 +7724,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
             if (Graph) {
               if (perfMode) {
                 // zoomToFit reads graphData(), which perf mode leaves empty —
-                // frame the instanced scene by its bounding radius instead.
-                Graph.cameraPosition({ x: 0, y: 0, z: perfBoundingRadius() * 1.9 }, { x: 0, y: 0, z: 0 }, 2500);
+                // frame the instanced scene by its actual shape instead.
+                perfFrameCamera(2500);
               } else {
                 // Zoom to fit entire graph with 100px padding, 1s animation
                 Graph.zoomToFit(2500, 80);
