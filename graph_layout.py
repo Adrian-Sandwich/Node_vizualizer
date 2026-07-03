@@ -190,7 +190,7 @@ def layout_spiral(nodes, edges, radius):
         rr[i] = radius * (0.05 + 0.95 * r_norm)
         th[i] = (arm * (2 * math.pi / ARMS)
                  + (rr[i] / radius) * SWIRL
-                 + gauss() * (0.18 + 0.5 * (1 - rr[i] / radius)))
+                 + gauss() * (0.55 + 0.45 * (1 - rr[i] / radius)))
 
     best_nbr = [-1] * n
     for a, b in pairs:
@@ -202,7 +202,7 @@ def layout_spiral(nodes, edges, radius):
         for i in range(n):
             nb = best_nbr[i]
             if deg[i] <= 2 and nb >= 0 and deg[nb] > deg[i]:
-                th[i] = th[nb] + gauss() * 0.18
+                th[i] = th[nb] + gauss() * 0.32
 
     coords = []
     for i in range(n):
