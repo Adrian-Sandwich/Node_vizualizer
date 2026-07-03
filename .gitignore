@@ -6,3 +6,4 @@ __pycache__/
 .venv/
 .nodeviz-chrome-profile/
 graphs/oax_full.kbin
+graphs/oax_all.kbin
