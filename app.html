@@ -5201,9 +5201,18 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       for (let i = 0; i < n; i++) if (deg[i] > maxDeg) maxDeg = deg[i];
       const rMin = radius * 0.06, rMax = radius;
       const logMax = Math.log1p(maxDeg);
+      // blend log-degree with degree rank so uniform-degree graphs (trees)
+      // fill the disc instead of collapsing onto one shell (see spiral)
+      const rankN = new Float64Array(n);
+      {
+        const order = Array.from({ length: n }, (_, i) => i)
+          .sort((a, b) => deg[b] - deg[a]);
+        for (let r = 0; r < n; r++) rankN[order[r]] = (r + 0.5) / n;
+      }
       const radii = new Float64Array(n);
       for (let i = 0; i < n; i++) {
-        radii[i] = rMin + (1 - Math.log1p(deg[i]) / logMax) * (rMax - rMin);
+        const t = 0.6 * (1 - Math.log1p(deg[i]) / logMax) + 0.4 * rankN[i];
+        radii[i] = rMin + t * (rMax - rMin);
       }
 
       // initial directions: domain sectors, fibonacci spread inside each
@@ -5546,6 +5555,16 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       let maxDeg = 1;
       for (let i = 0; i < n; i++) if (deg[i] > maxDeg) maxDeg = deg[i];
       const logMax = Math.log1p(maxDeg);
+      // degree RANK (ties spread evenly): without it, graphs with uniform
+      // degrees — trees, hierarchies — collapse onto a single shell and the
+      // spiral becomes a tangle (the log-degree radius was tuned to
+      // hub-heavy bipartite data like casper)
+      const rankNorm = new Float64Array(n);
+      {
+        const order = Array.from({ length: n }, (_, i) => i)
+          .sort((a, b) => deg[b] - deg[a]);
+        for (let r = 0; r < n; r++) rankNorm[order[r]] = (r + 0.5) / n;
+      }
       let seed = 1234567; // deterministic
       const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
       const gauss = () => (rnd() + rnd() + rnd() - 1.5) / 1.5;
@@ -5558,19 +5577,49 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         if (!domBase.has(k)) domBase.set(k, domBase.size % ARMS);
       });
       const armShare = n / ARMS;
+      const rrArr = new Float64Array(n);
+      const thArr = new Float64Array(n);
       nodes.forEach((nd, i) => {
         const k = nd._domain || 'default';
         const spread = Math.max(1, Math.min(ARMS, Math.ceil(domSize.get(k) / armShare)));
         const arm = (domBase.get(k) + ((rnd() * spread) | 0)) % ARMS;
-        const t = 1 - Math.log1p(deg[i]) / logMax; // 0 = hub … 1 = leaf
+        const tLog = 1 - Math.log1p(deg[i]) / logMax;      // 0 = hub … 1 = leaf
+        const t = 0.6 * tLog + 0.4 * rankNorm[i];           // rank spreads ties
         const rNorm = Math.min(1, Math.max(0.02, Math.pow(t, 1.25) + gauss() * 0.05));
-        const rr = radius * (0.05 + 0.95 * rNorm);
-        const theta = arm * (2 * Math.PI / ARMS)
-                    + (rr / radius) * SWIRL
-                    + gauss() * (0.18 + 0.5 * (1 - rr / radius)); // fuzzier near the core
+        rrArr[i] = radius * (0.05 + 0.95 * rNorm);
+        thArr[i] = arm * (2 * Math.PI / ARMS)
+                 + (rrArr[i] / radius) * SWIRL
+                 + gauss() * (0.18 + 0.5 * (1 - rrArr[i] / radius)); // fuzzier near the core
+      });
+      // Tree-aware pass: low-degree nodes (leaves/chains) inherit the angle
+      // of their best-connected neighbor, so sparse graphs (hierarchies)
+      // form radial branches instead of chords criss-crossing the disc.
+      // Dense hub-spoke graphs (casper) are barely affected: their nodes
+      // exceed the degree gate.
+      {
+        const bestNbr = new Int32Array(n).fill(-1);
+        const idx2 = idx; // id → index map from above
+        for (const e of (edges || [])) {
+          const a = idx2.get(typeof e.source === 'object' ? e.source.id : e.source);
+          const b = idx2.get(typeof e.target === 'object' ? e.target.id : e.target);
+          if (a == null || b == null) continue;
+          if (bestNbr[a] < 0 || deg[b] > deg[bestNbr[a]]) bestNbr[a] = b;
+          if (bestNbr[b] < 0 || deg[a] > deg[bestNbr[b]]) bestNbr[b] = a;
+        }
+        for (let pass = 0; pass < 2; pass++) {
+          for (let i = 0; i < n; i++) {
+            const nb = bestNbr[i];
+            if (deg[i] <= 2 && nb >= 0 && deg[nb] > deg[i]) {
+              thArr[i] = thArr[nb] + gauss() * 0.18;
+            }
+          }
+        }
+      }
+      nodes.forEach((nd, i) => {
+        const rr = rrArr[i];
         const thick = radius * (0.15 * Math.pow(1 - rr / radius, 1.6) + 0.02); // bulge
-        nd.x = rr * Math.cos(theta);
-        nd.z = rr * Math.sin(theta);
+        nd.x = rr * Math.cos(thArr[i]);
+        nd.z = rr * Math.sin(thArr[i]);
         nd.y = gauss() * thick;
       });
     }
@@ -5662,13 +5711,24 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           const r2 = target[k] * target[k] + target[k + 1] * target[k + 1] + target[k + 2] * target[k + 2];
           if (r2 > maxR2) maxR2 = r2;
         }
-        // frame the incoming arrangement while it animates — tilted overhead
-        // for the discs (edge-on they're just a line), frontal for original
+        // frame the incoming arrangement while it animates. Pick the camera
+        // angle from the target SHAPE, not the mode: flat (disc-like) layouts
+        // get the tilted overhead view (edge-on they collapse into a line —
+        // this hit baked radial files in ORIGINAL mode), volumetric ones get
+        // the frontal view.
         ht_setOrbitCenter(0, 0, 0);
+        let maxY = 0, maxXZ = 0;
+        for (let k = 0; k < n * 3; k += 3) {
+          const ay = Math.abs(target[k + 1]);
+          const axz = Math.hypot(target[k], target[k + 2]);
+          if (ay > maxY) maxY = ay;
+          if (axz > maxXZ) maxXZ = axz;
+        }
+        const isFlat = maxY < maxXZ * 0.55;
         const fr = Math.sqrt(maxR2) || SCALE * 4;
-        const camTo = mode === 'original'
-          ? { x: 0, y: 0, z: fr * 1.9 }
-          : { x: 0, y: fr * 1.7, z: fr * 1.15 };
+        const camTo = isFlat
+          ? { x: 0, y: fr * 1.7, z: fr * 1.15 }
+          : { x: 0, y: 0, z: fr * 1.9 };
         Graph.cameraPosition(camTo, { x: 0, y: 0, z: 0 }, duration);
         const m4 = new THREE.Matrix4();
         const t0 = performance.now();
