@@ -6861,10 +6861,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       setTimeout(() => {
         ob.classList.add('hidden');
         if (ObGraph) { if (ObGraph._destructor) ObGraph._destructor(); ObGraph = null; }
-        // Reveal the real graph now that onboarding is done
+        // Reveal the real graph now that onboarding is done. Do NOT reset the
+        // camera to frontal here — initGraph already framed the scene by its
+        // shape (flat layouts get the tilted view; a frontal reset showed
+        // discs edge-on as a squashed X). Just sync the hand-orbit spherical
+        // coords to wherever the camera is.
         document.getElementById('graph').style.visibility = 'visible';
-        ht_camPhi = 0; ht_camTheta = Math.PI / 2;
-        ht_updateCamera();
+        ht_syncSpherical();
         appState = 'ready';
       }, 800);
     }
