@@ -5153,6 +5153,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let perfMode = false;
     let perfData = null; // kbin binary-mode typed data (null for JSON loads)
     const MAX_GPU_EDGES = 5000000; // edge-buffer upload budget (short edges first)
+    const PERF_POINTS_THRESHOLD = 300000; // above this, nodes render as round points (63x fewer verts than instanced spheres)
+    const POINTS_OVERRIDE = new URLSearchParams(location.search).get('points'); // '1'|'0'
     let _usedFallbackLayout = false; // spiral seed applied (no baked coords)
     let perf = null; // { mesh, lines, geos/mats, positions, baseColors, scales, edgeSrc, edgeDst, nodes, idToIndex, handlers, hoverIdx }
     const PERF_NODE_THRESHOLD = 8000;
@@ -5486,28 +5488,78 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // by both the JSON adapter above and the kbin binary loader.
     function buildPerfCore(d) {
       const n = d.count;
-      const sphereGeo = new THREE.SphereGeometry(1, 8, 6);
-      const nodeMat = new THREE.MeshBasicMaterial();
-      const mesh = new THREE.InstancedMesh(sphereGeo, nodeMat, n);
-      // r128 doesn't grow bounds per instance — without this the whole mesh
-      // vanishes once the unit sphere leaves the frustum.
-      mesh.frustumCulled = false;
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      const usePoints = POINTS_OVERRIDE === '1'
+        || (POINTS_OVERRIDE !== '0' && n > PERF_POINTS_THRESHOLD);
 
-      const m4 = new THREE.Matrix4();
       const col = new THREE.Color();
       const baseColors = new Float32Array(n * 3);
       const scales = d.baseScale.slice(); // live visual scales (0 = hidden)
       for (let i = 0; i < n; i++) {
-        const x = d.positions[i * 3], y = d.positions[i * 3 + 1], z = d.positions[i * 3 + 2];
-        const sc = scales[i];
-        m4.makeScale(sc, sc, sc).setPosition(x, y, z);
-        mesh.setMatrixAt(i, m4);
         col.set(CLUSTER_COLORS[d.clusterIdx[i] % CLUSTER_COLORS.length] || '#888888');
-        mesh.setColorAt(i, col);
         baseColors[i * 3] = col.r; baseColors[i * 3 + 1] = col.g; baseColors[i * 3 + 2] = col.b;
       }
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+
+      let mesh = null, sphereGeo = null, nodeMat = null;
+      let pointsObj = null, pointsGeo = null, pointsMat = null;
+      let colorAttrArr = null, sizeAttrArr = null;
+
+      if (usePoints) {
+        // POINTS MODE: 1 vertex per node (vs 63 for the instanced sphere) —
+        // required at ~1M nodes. Round sprite via fragment discard; per-node
+        // size attribute doubles as the visibility channel (0 = hidden).
+        log(`[perf] points-mode: ${n.toLocaleString()} nodos`);
+        pointsGeo = new THREE.BufferGeometry();
+        pointsGeo.setAttribute('position', new THREE.BufferAttribute(d.positions, 3));
+        colorAttrArr = baseColors.slice();
+        sizeAttrArr = scales.slice();
+        pointsGeo.setAttribute('color', new THREE.BufferAttribute(colorAttrArr, 3));
+        pointsGeo.setAttribute('psize', new THREE.BufferAttribute(sizeAttrArr, 1));
+        pointsMat = new THREE.ShaderMaterial({
+          transparent: true,
+          depthWrite: false,
+          vertexShader: `
+            attribute float psize;
+            varying vec3 vColor;
+            varying float vSize;
+            void main() {
+              vColor = color;
+              vSize = psize;
+              vec4 mv = modelViewMatrix * vec4(position, 1.0);
+              gl_PointSize = psize * (900.0 / max(1.0, -mv.z));
+              gl_Position = projectionMatrix * mv;
+            }`,
+          fragmentShader: `
+            varying vec3 vColor;
+            varying float vSize;
+            void main() {
+              if (vSize <= 0.0) discard;
+              vec2 c = gl_PointCoord - 0.5;
+              if (dot(c, c) > 0.25) discard;
+              gl_FragColor = vec4(vColor, 0.95);
+            }`,
+          vertexColors: true,
+        });
+        pointsObj = new THREE.Points(pointsGeo, pointsMat);
+        pointsObj.frustumCulled = false;
+      } else {
+        sphereGeo = new THREE.SphereGeometry(1, 8, 6);
+        nodeMat = new THREE.MeshBasicMaterial();
+        mesh = new THREE.InstancedMesh(sphereGeo, nodeMat, n);
+        // r128 doesn't grow bounds per instance — without this the whole mesh
+        // vanishes once the unit sphere leaves the frustum.
+        mesh.frustumCulled = false;
+        mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        const m4 = new THREE.Matrix4();
+        for (let i = 0; i < n; i++) {
+          const x = d.positions[i * 3], y = d.positions[i * 3 + 1], z = d.positions[i * 3 + 2];
+          const sc = scales[i];
+          m4.makeScale(sc, sc, sc).setPosition(x, y, z);
+          mesh.setMatrixAt(i, m4);
+          col.setRGB(baseColors[i * 3], baseColors[i * 3 + 1], baseColors[i * 3 + 2]);
+          mesh.setColorAt(i, col);
+        }
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      }
 
       // GPU upload budget: edges arrive length-sorted, so the cut keeps the
       // short structural ones. Never silent.
@@ -5547,9 +5599,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const lines = new THREE.LineSegments(lineGeo, lineMat);
       lines.frustumCulled = false;
 
-      Graph.scene().add(mesh);
+      Graph.scene().add(usePoints ? pointsObj : mesh);
       Graph.scene().add(lines);
       perf = { mesh, lines, sphereGeo, nodeMat, lineGeo, lineMat,
+               points: usePoints ? pointsObj : null,
+               pointsGeo, pointsMat, colorAttrArr, sizeAttrArr,
                count: n, edgeCount: e, uploadCount,
                positions: d.positions, baseColors, scales,
                clusterIdx: d.clusterIdx, baseScale: d.baseScale,
@@ -5565,9 +5619,16 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       if (!perf) { perfMode = false; return; }
       try {
         const scene = Graph && Graph.scene && Graph.scene();
-        if (scene) { scene.remove(perf.mesh); scene.remove(perf.lines); }
+        if (scene) {
+          if (perf.mesh) scene.remove(perf.mesh);
+          if (perf.points) scene.remove(perf.points);
+          scene.remove(perf.lines);
+        }
       } catch (e) { /* Graph already destroyed */ }
-      perf.sphereGeo.dispose(); perf.nodeMat.dispose();
+      if (perf.sphereGeo) perf.sphereGeo.dispose();
+      if (perf.nodeMat) perf.nodeMat.dispose();
+      if (perf.pointsGeo) perf.pointsGeo.dispose();
+      if (perf.pointsMat) perf.pointsMat.dispose();
       perf.lineGeo.dispose(); perf.lineMat.dispose();
       // handlers live on the #graph div, which SURVIVES Graph._destructor() —
       // they must be removed here or they stack across reloads.
@@ -5605,6 +5666,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     }
 
     function perfSetInstanceScale(i, s) {
+      if (perf.points) {
+        perf.sizeAttrArr[i] = s;
+        perf.pointsGeo.getAttribute('psize').needsUpdate = true;
+        return;
+      }
       const m4 = new THREE.Matrix4();
       const p = perf.positions;
       m4.makeScale(s, s, s).setPosition(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
@@ -5704,10 +5770,21 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           g = g * (1 - FADE) + bg.g * FADE;
           b = b * (1 - FADE) + bg.b * FADE;
         }
-        col.setRGB(r, g, b);
-        perf.mesh.setColorAt(i, col);
+        if (perf.points) {
+          perf.colorAttrArr[i * 3] = r;
+          perf.colorAttrArr[i * 3 + 1] = g;
+          perf.colorAttrArr[i * 3 + 2] = b;
+        } else {
+          col.setRGB(r, g, b);
+          perf.mesh.setColorAt(i, col);
+        }
       }
-      if (perf.mesh.instanceColor) perf.mesh.instanceColor.needsUpdate = true;
+      if (perf.points) {
+        perf.pointsGeo.getAttribute('color').needsUpdate = true;
+        perf.pointsGeo.getAttribute('psize').needsUpdate = true;
+      } else if (perf.mesh.instanceColor) {
+        perf.mesh.instanceColor.needsUpdate = true;
+      }
 
       // Edges: bright if incident to the selection, dimmed otherwise, collapsed
       // to zero length if either endpoint is hidden (rasterizes nothing).
@@ -6044,13 +6121,17 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           for (let k = 0; k < n * 3; k++) {
             perf.positions[k] = start[k] + (target[k] - start[k]) * e;
           }
-          for (let i = 0; i < n; i++) {
-            const s = perf.scales[i] || 0.0001;
-            m4.makeScale(s, s, s).setPosition(
-              perf.positions[i * 3], perf.positions[i * 3 + 1], perf.positions[i * 3 + 2]);
-            perf.mesh.setMatrixAt(i, m4);
+          if (perf.points) {
+            perf.pointsGeo.getAttribute('position').needsUpdate = true;
+          } else {
+            for (let i = 0; i < n; i++) {
+              const s = perf.scales[i] || 0.0001;
+              m4.makeScale(s, s, s).setPosition(
+                perf.positions[i * 3], perf.positions[i * 3 + 1], perf.positions[i * 3 + 2]);
+              perf.mesh.setMatrixAt(i, m4);
+            }
+            perf.mesh.instanceMatrix.needsUpdate = true;
           }
-          perf.mesh.instanceMatrix.needsUpdate = true;
           for (let i = 0; i < perf.uploadCount; i++) {
             const si = perf.edgeSrc[i], ti = perf.edgeDst[i];
             if (si < 0 || ti < 0) continue;
@@ -6220,15 +6301,23 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
             }
             log(`[perfSim] tick=${ticks} nonfinite=${bad} maxR=${Math.sqrt(r2max).toFixed(1)}`);
           }
-          for (let i = 0; i < perf.count; i++) {
-            const s = perf.scales[i] || 0.0001;
-            const x = perf.positions[i * 3], y = perf.positions[i * 3 + 1], z = perf.positions[i * 3 + 2];
-            m4.makeScale(s, s, s).setPosition(x, y, z);
-            perf.mesh.setMatrixAt(i, m4);
-            // keep JSON records in sync (kbin materializes from positions)
-            if (perf.nodes) { perf.nodes[i].x = x; perf.nodes[i].y = y; perf.nodes[i].z = z; }
+          if (perf.points) {
+            perf.pointsGeo.getAttribute('position').needsUpdate = true;
+          } else {
+            for (let i = 0; i < perf.count; i++) {
+              const s = perf.scales[i] || 0.0001;
+              const x = perf.positions[i * 3], y = perf.positions[i * 3 + 1], z = perf.positions[i * 3 + 2];
+              m4.makeScale(s, s, s).setPosition(x, y, z);
+              perf.mesh.setMatrixAt(i, m4);
+            }
+            perf.mesh.instanceMatrix.needsUpdate = true;
           }
-          perf.mesh.instanceMatrix.needsUpdate = true;
+          // keep JSON records in sync (kbin materializes from positions)
+          if (perf.nodes) for (let i = 0; i < perf.count; i++) {
+            perf.nodes[i].x = perf.positions[i * 3];
+            perf.nodes[i].y = perf.positions[i * 3 + 1];
+            perf.nodes[i].z = perf.positions[i * 3 + 2];
+          }
           for (let i = 0; i < perf.uploadCount; i++) {
             const si = perf.edgeSrc[i], ti = perf.edgeDst[i];
             if (si < 0 || ti < 0) continue;
@@ -6404,6 +6493,21 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           const cam = Graph.camera();
           const camPos = cam.position;
 
+          // Perf mode: auto edge density by camera distance — zoomed out
+          // shows fewer (short) edges, zooming in reveals detail. Manual E
+          // density acts as the ceiling; the fps-adaptive cut can go lower.
+          if (perfMode && perf && _labelFrame % CULLING_UPDATE_INTERVAL === 0 && !perf._rangeCut) {
+            const camD = Graph.camera().position.length();
+            const R = perf._boundR || (perf._boundR = perfBoundingRadius());
+            const zoomF = Math.max(0.25, Math.min(1, 1.6 - (camD / (R * 2.2))));
+            const manual = EDGE_DENSITY_STEPS[_edgeDensityIdx];
+            const f = Math.min(manual, zoomF);
+            const want = Math.floor(perf.uploadCount * f) * 2;
+            if (Math.abs((perf._lastDraw || 0) - want) > perf.uploadCount * 0.1) {
+              perf._lastDraw = want;
+              perf.lineGeo.setDrawRange(0, f >= 1 ? Infinity : want);
+            }
+          }
           // Performance culling: hide distant nodes to improve FPS
           if (++_labelFrame % CULLING_UPDATE_INTERVAL === 0) {
             culledNodeCount = 0;
