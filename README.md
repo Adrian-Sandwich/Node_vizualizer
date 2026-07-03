@@ -47,9 +47,10 @@ rendering (1 draw call for all nodes + 1 for all edges, no live physics):
 ```
 
 Perf mode activates automatically above 8k nodes / 60k edges (`?perf=1|0`
-overrides). Graphs without baked coords get a deterministic sphere fallback.
-Smaller graphs that carry baked coords load instantly (positions pinned,
-physics skipped).
+overrides). Graphs without baked coords are arranged in-browser with the
+radial galaxy layout (instant, no Python needed); baking with `--algo drl`
+is an optional upgrade for the organic force-directed look. Smaller graphs
+that carry baked coords load instantly (positions pinned, physics skipped).
 
 **Focused subgraphs — prune.** For interactive physics on a slice:
 
@@ -61,8 +62,14 @@ python3 graph_prune.py INPUT.kgraph.json OUTPUT.kgraph.json --min-shared 3
 Add `--include-continua` to also keep continuing students for contrast.
 
 **URL params:** `?graph=<url>` auto-loads a graph over HTTP (direct links,
-testing); `?ob=0` skips the gesture onboarding; `?debug=1` enables console
-logging; `?perf=1|0` forces perf mode on/off.
+testing); `?ob=0` skips the gesture onboarding; `?galaxy=1` opens straight
+into the galaxy view; `?debug=1` enables console logging + gesture HUD;
+`?perf=1|0` forces perf mode on/off; `?sim=1` runs the experimental live
+WebGPU relax; `?legacy=1` / `?crop=0` control the hand-tracking pipeline.
+
+**Anonymization:** `graph_anonymize.py` replaces student matrículas and
+professor names with sequential aliases across a set of kgraph files (shared
+mapping). The casper graphs shipped in `graphs/` are anonymized.
 
 ### Step 1: Start the server on the remote machine
 
@@ -107,10 +114,27 @@ Your local webcam will work because the browser sees `localhost` (secure context
 
 | Gesture | Action |
 |---|---|
-| **Palm** (open hand) | Orbit / rotate the graph |
-| **Point** (index finger) | Navigate nodes — move finger to switch between nodes, hold still to select |
-| **Peace** ✌️ (index + middle) | Reset camera — zooms to fit the entire graph |
-| **Two hands** | Pinch / spread to zoom |
+| **Palm** (open hand) | Orbit / rotate — around the selected node when there is one |
+| **Point** (index finger) | An on-graph cursor follows your fingertip; hover a node and dwell ~0.5s to select |
+| **Pinch** 🤏 (index + thumb) | Instant select of the hovered node |
+| **Two hands** | Move apart / together to zoom |
+| **Peace** ✌️ (index + middle) | Hold to reset the camera to the full graph |
+| **Fist** ✊ (hold ~1.5s) | Pause / resume hand tracking (rest your hand) |
+
+Hand tracking runs on MediaPipe Tasks HandLandmarker (GPU delegate) with a
+One Euro landmark filter, rotation-invariant gesture classification, and
+adaptive exposure compensation for bright backgrounds. `?legacy=1` forces the
+older Pose→crop pipeline; `?crop=0` disables the local-contrast enhancement.
+
+## Keyboard
+
+| Key | Action |
+|---|---|
+| **G** | Galaxy view: applies the space theme and cycles spiral ↔ original arrangement |
+| **B** | Background toggle: white (file's own palette) ↔ deep space |
+| **E** | Edge density 100% → 60% → 30% (short edges kept first — cluster view) |
+| **H** | Recenter camera |
+| **ESC** | Close the detail panel / deselect |
 
 The camera preview (bottom-left) shows the video feed with hand skeleton overlay so you can verify your hands are in frame.
 
