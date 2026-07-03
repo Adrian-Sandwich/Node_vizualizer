@@ -2058,6 +2058,7 @@
 
     async function loadExternalGraph(file) {
       try {
+        perfData = null; // JSON path — clear any previous kbin state
         setupStatus.textContent = 'READING GRAPH FILE...';
         const text = await file.text();
         log('[loadExternalGraph] File read, size:', text.length);
@@ -2175,7 +2176,11 @@
         const file = e.target.files[0];
         if (!file) return;
         try {
-          await loadExternalGraph(file);
+          if (file.name.toLowerCase().endsWith('.kbin')) {
+            await loadKbinBuffer(await file.arrayBuffer(), file.name);
+          } else {
+            await loadExternalGraph(file);
+          }
         } catch (err) {
           setupStatus.textContent = 'ERROR: ' + err.message.toUpperCase();
           console.error(err);
@@ -2194,8 +2199,12 @@
         try {
           const resp = await fetch(_autoGraphUrl);
           if (!resp.ok) throw new Error('HTTP ' + resp.status);
-          const text = await resp.text();
-          await loadExternalGraph({ text: async () => text });
+          if (_autoGraphUrl.toLowerCase().includes('.kbin')) {
+            await loadKbinBuffer(await resp.arrayBuffer(), _autoGraphUrl);
+          } else {
+            const text = await resp.text();
+            await loadExternalGraph({ text: async () => text });
+          }
         } catch (err) {
           console.error('[autoload]', err);
           setupStatus.textContent = 'AUTOLOAD ERROR: ' + err.message.toUpperCase();
@@ -4307,7 +4316,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         : '';
 
       // ── Badges ──
-      const edges = adjacency[node.id] || [];
+      const edges = getAdjacencyOf(node);
       const nConn = edges.length;
       document.getElementById('dc-badges').innerHTML =
         `<span class="dc-badge dc-badge-cluster">${escapeHtml(node.cluster_name || node._domain || '')}</span>`
@@ -4318,7 +4327,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       const neighbors = [];
       const seen = new Set([node.id]);
       edges.forEach(e => {
-        const t = nodeById[e.id];
+        const t = getNodeRecordById(e.id);
         if (!t || seen.has(t.id)) return;
         seen.add(t.id);
         neighbors.push({ node: t, label: e.label, color: CLUSTER_COLORS[t.cluster_id % CLUSTER_COLORS.length] });
@@ -4370,7 +4379,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         const edgeTypeCounts = {};
         let connHtml = '<ul class="dc-conn-list">';
         edges.forEach(e => {
-          const t = nodeById[e.id];
+          const t = getNodeRecordById(e.id);
           if (!t) return;
           const tColor = CLUSTER_COLORS[t.cluster_id % CLUSTER_COLORS.length];
           const tLabel = e.label || 'UNKNOWN';
@@ -4422,7 +4431,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         // Connections
         let connHtml = '<ul class="dc-conn-list">';
         edges.forEach(e => {
-          const target = nodeById[e.id];
+          const target = getNodeRecordById(e.id);
           if (!target) return;
           const tColor = CLUSTER_COLORS[target.cluster_id % CLUSTER_COLORS.length];
           connHtml += `<li class="dc-conn-item" data-node-id="${escapeAttr(target.id)}"><span class="dc-conn-dot" style="background:${tColor}"></span><div class="dc-conn-info"><div class="dc-conn-name">${escapeHtml(target.name)}</div><div class="dc-conn-edge">${escapeHtml(e.label)}</div></div><span class="dc-conn-arrow">&#x203A;</span></li>`;
@@ -4595,7 +4604,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         const { x, y } = canvasCoords(e);
         const hit = hitTest(x, y);
         if (!hit) return;
-        const targetNode = nodeById[hit.nodeId];
+        const targetNode = getNodeRecordById(hit.nodeId);
         if (!targetNode) return;
         selectedNode = targetNode;
         showDetailCard(targetNode);
@@ -4660,7 +4669,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       if (!item) return;
       const rawId = item.dataset.nodeId;
       const id = isExternalGraph ? rawId : parseInt(rawId);
-      const targetNode = nodeById[id];
+      const targetNode = getNodeRecordById(id);
       if (!targetNode) return;
       selectedNode = targetNode;
       showDetailCard(targetNode);
@@ -5142,6 +5151,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // instance and would freeze per mousemove.
     // ═══════════════════════════════════════════════════════════════════════
     let perfMode = false;
+    let perfData = null; // kbin binary-mode typed data (null for JSON loads)
+    const MAX_GPU_EDGES = 5000000; // edge-buffer upload budget (short edges first)
     let _usedFallbackLayout = false; // spiral seed applied (no baked coords)
     let perf = null; // { mesh, lines, geos/mats, positions, baseColors, scales, edgeSrc, edgeDst, nodes, idToIndex, handlers, hoverIdx }
     const PERF_NODE_THRESHOLD = 8000;
@@ -5288,36 +5299,155 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       return Math.sqrt(max2) || SCALE * 4;
     }
 
+    // ═══ KBIN BINARY LOADER ═════════════════════════════════════════════════
+    // .kbin (see parquet_to_kbin.py): typed-array views straight over the
+    // fetched ArrayBuffer — no JSON.parse (V8's ~512MB string cap), no
+    // per-node JS objects. Node records materialize lazily on interaction.
+    function parseKbin(buf) {
+      const dv = new DataView(buf);
+      const magic = new TextDecoder().decode(new Uint8Array(buf, 0, 4));
+      if (magic !== 'KBN1') throw new Error('no es un archivo .kbin (magic ' + magic + ')');
+      const n = dv.getUint32(4, true);
+      const e = dv.getUint32(8, true);
+      const metaLen = dv.getUint32(12, true);
+      const pad4 = (x) => (x + 3) & ~3;
+      let off = 16;
+      const meta = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, off, metaLen)));
+      off += pad4(metaLen);
+      const positions = new Float32Array(buf, off, n * 3); off += n * 12;
+      const domainIdx = new Uint8Array(buf, off, n); off += pad4(n);
+      const idOffsets = new Uint32Array(buf, off, n + 1); off += (n + 1) * 4;
+      const blobLen = dv.getUint32(off, true); off += 4;
+      const idBlob = new Uint8Array(buf, off, blobLen); off += pad4(blobLen);
+      const edgeSrc = new Uint32Array(buf, off, e); off += e * 4;
+      const edgeDst = new Uint32Array(buf, off, e); off += e * 4;
+      const edgeTypeIdx = new Uint8Array(buf, off, e); off += pad4(e);
+      if (off !== buf.byteLength) throw new Error(`kbin: ${buf.byteLength - off} bytes de sobra`);
+
+      // CSR adjacency (both directions) — typed, O(E)
+      const csrOff = new Uint32Array(n + 1);
+      for (let i = 0; i < e; i++) { csrOff[edgeSrc[i] + 1]++; csrOff[edgeDst[i] + 1]++; }
+      for (let i = 0; i < n; i++) csrOff[i + 1] += csrOff[i];
+      const csrNbr = new Uint32Array(e * 2);
+      const csrType = new Uint8Array(e * 2);
+      const cursor = csrOff.slice(0, n);
+      for (let i = 0; i < e; i++) {
+        const a = edgeSrc[i], b = edgeDst[i], t = edgeTypeIdx[i];
+        csrNbr[cursor[a]] = b; csrType[cursor[a]++] = t;
+        csrNbr[cursor[b]] = a; csrType[cursor[b]++] = t;
+      }
+      const decoder = new TextDecoder();
+      return { count: n, edgeCount: e, meta, positions, domainIdx,
+               idOffsets, idBlob, edgeSrc, edgeDst, edgeTypeIdx,
+               csrOff, csrNbr, csrType, decoder };
+    }
+
+    function kbinIdAt(i) {
+      const d = perfData;
+      return d.decoder.decode(d.idBlob.subarray(d.idOffsets[i], d.idOffsets[i + 1]));
+    }
+
+    // ids are sorted in the file (np.unique) → binary search, no 1M-entry Map
+    function kbinFindIndex(id) {
+      const d = perfData;
+      let lo = 0, hi = d.count - 1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const midId = kbinIdAt(mid);
+        if (midId === id) return mid;
+        if (midId < id) lo = mid + 1; else hi = mid - 1;
+      }
+      return -1;
+    }
+
+    function kbinNodeAt(i) {
+      const d = perfData;
+      const id = kbinIdAt(i);
+      const dom = d.meta.domains[d.domainIdx[i]] || 'default';
+      const sep = id.indexOf('::');
+      return {
+        id, name: sep >= 0 ? id.slice(sep + 2) : id,
+        _tag: dom, _domain: dom, _vid: id, _tooltip: id, _rawProps: {},
+        cluster_id: d.domainIdx[i], cluster_name: dom,
+        x: d.positions[i * 3], y: d.positions[i * 3 + 1], z: d.positions[i * 3 + 2],
+        is_medoid: 0, is_llm_center: 0, text_preview: '', filename: '',
+        __kbinIdx: i,
+      };
+    }
+
+    const KBIN_PANEL_MAX_CONN = 400; // hubs can have 100k+ neighbors — cap the DOM
+    function kbinAdjacencyOf(node) {
+      const d = perfData;
+      const i = node.__kbinIdx ?? kbinFindIndex(node.id);
+      if (i < 0) return [];
+      const out = [];
+      const end = Math.min(d.csrOff[i + 1], d.csrOff[i] + KBIN_PANEL_MAX_CONN);
+      for (let k = d.csrOff[i]; k < end; k++) {
+        out.push({ id: kbinIdAt(d.csrNbr[k]),
+                   label: (d.meta.edgeTypes[d.csrType[k]] || '').toLowerCase().replace(/_/g, ' ') });
+      }
+      return out;
+    }
+
+    // Unified record/adjacency access — JSON structures or kbin lazy path
+    function getNodeRecordById(id) {
+      if (perfData) {
+        const i = kbinFindIndex(id);
+        return i >= 0 ? kbinNodeAt(i) : null;
+      }
+      return nodeById[id];
+    }
+    function getAdjacencyOf(node) {
+      if (perfData) return kbinAdjacencyOf(node);
+      return adjacency[node.id] || [];
+    }
+
+    async function loadKbinBuffer(buf, fileLabel) {
+      setBootStage('PARSEANDO KBIN…', fileLabel || '');
+      perfData = parseKbin(buf);
+      const meta = perfData.meta;
+      isExternalGraph = true;
+      CLUSTER_COLORS = meta.domains.map(d => meta.domainColors[d] || '#888888');
+      fileClusterColors = CLUSTER_COLORS.slice();
+      const clusterNames = {};
+      meta.domains.forEach((d, i) => { clusterNames[i] = d; });
+      externalGraphMeta = { EDGE_TYPE_COUNTS: meta.edgeTypeCounts || {} };
+      allNodes = null;
+      currentLayout = 'graph';
+      lastLoadedGraphData = null; // export not supported for kbin
+
+      document.getElementById('setup').classList.add('hidden');
+      document.getElementById('main').classList.remove('hidden');
+      document.getElementById('reanalyze-btn').classList.add('hidden');
+      document.getElementById('controls').style.display = 'none';
+      setBootStage('CONSTRUYENDO ESCENA…',
+        `${perfData.count.toLocaleString()} nodos · ${perfData.edgeCount.toLocaleString()} aristas`);
+      await new Promise(r => setTimeout(r, 30)); // let the boot stage paint
+
+      await initGraph([], []);
+      buildLegend(clusterNames);
+      await new Promise(r => setTimeout(r, 0));
+      buildReadouts(perfData.count, perfData.edgeCount);
+      setBootStage(`GRAPH ONLINE // ${perfData.count.toLocaleString()} NODES // ${perfData.edgeCount.toLocaleString()} EDGES`, '');
+      setTimeout(hideBootStatus, 2000);
+    }
+
     function buildPerfScene(nodes, edges) {
+      // JSON path: flatten node/edge objects into typed arrays, then hand to
+      // the array core shared with the kbin binary path.
       const n = nodes.length;
-      const sphereGeo = new THREE.SphereGeometry(1, 8, 6);
-      const nodeMat = new THREE.MeshBasicMaterial();
-      const mesh = new THREE.InstancedMesh(sphereGeo, nodeMat, n);
-      // r128 doesn't grow bounds per instance — without this the whole mesh
-      // vanishes once the unit sphere leaves the frustum.
-      mesh.frustumCulled = false;
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-
-      const m4 = new THREE.Matrix4();
-      const col = new THREE.Color();
       const positions = new Float32Array(n * 3);
-      const baseColors = new Float32Array(n * 3);
-      const scales = new Float32Array(n);
+      const clusterIdx = new Uint16Array(n);
+      const baseScale = new Float32Array(n);
       const idToIndex = new Map();
-
       nodes.forEach((node, i) => {
         idToIndex.set(node.id, i);
-        const x = node.x || 0, y = node.y || 0, z = node.z || 0;
-        positions[i * 3] = x; positions[i * 3 + 1] = y; positions[i * 3 + 2] = z;
-        const s = node.is_medoid ? 5 : 3;
-        scales[i] = s;
-        m4.makeScale(s, s, s).setPosition(x, y, z);
-        mesh.setMatrixAt(i, m4);
-        col.set(CLUSTER_COLORS[node.cluster_id % CLUSTER_COLORS.length] || '#888888');
-        mesh.setColorAt(i, col);
-        baseColors[i * 3] = col.r; baseColors[i * 3 + 1] = col.g; baseColors[i * 3 + 2] = col.b;
+        positions[i * 3] = node.x || 0;
+        positions[i * 3 + 1] = node.y || 0;
+        positions[i * 3 + 2] = node.z || 0;
+        clusterIdx[i] = node.cluster_id || 0;
+        baseScale[i] = node.is_medoid ? 5 : 3;
       });
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
 
       // Sort edges by 3D length (short/local first): the adaptive-quality
       // draw-range cut then drops the LONGEST hairball edges instead of a
@@ -5334,23 +5464,70 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         };
         return len(ia, ja) - len(ib, jb);
       });
-
       const e = orderedEdges.length;
-      const linePos = new Float32Array(e * 6);
-      const lineCol = new Uint8Array(e * 6);
       const edgeSrc = new Int32Array(e);
       const edgeDst = new Int32Array(e);
       for (let i = 0; i < e; i++) {
-        const si = idToIndex.get(orderedEdges[i].source);
-        const ti = idToIndex.get(orderedEdges[i].target);
-        edgeSrc[i] = si ?? -1; edgeDst[i] = ti ?? -1;
-        if (si == null || ti == null) continue; // both verts stay at origin, zero-length
-        linePos[i * 6]     = positions[si * 3];
-        linePos[i * 6 + 1] = positions[si * 3 + 1];
-        linePos[i * 6 + 2] = positions[si * 3 + 2];
-        linePos[i * 6 + 3] = positions[ti * 3];
-        linePos[i * 6 + 4] = positions[ti * 3 + 1];
-        linePos[i * 6 + 5] = positions[ti * 3 + 2];
+        edgeSrc[i] = idToIndex.get(orderedEdges[i].source) ?? -1;
+        edgeDst[i] = idToIndex.get(orderedEdges[i].target) ?? -1;
+      }
+
+      buildPerfCore({ count: n, edgeCount: e, positions, clusterIdx, baseScale,
+                      edgeSrc, edgeDst });
+      // rich JSON records stay available for interaction
+      perf.nodes = nodes;
+      perf.edges = orderedEdges;
+      perf.idToIndex = idToIndex;
+      perf.nodeAt = (i) => nodes[i];
+      perf.indexOfId = (id) => idToIndex.get(id) ?? -1;
+    }
+
+    // Array core — the ONLY render-path builder. Consumes typed arrays; used
+    // by both the JSON adapter above and the kbin binary loader.
+    function buildPerfCore(d) {
+      const n = d.count;
+      const sphereGeo = new THREE.SphereGeometry(1, 8, 6);
+      const nodeMat = new THREE.MeshBasicMaterial();
+      const mesh = new THREE.InstancedMesh(sphereGeo, nodeMat, n);
+      // r128 doesn't grow bounds per instance — without this the whole mesh
+      // vanishes once the unit sphere leaves the frustum.
+      mesh.frustumCulled = false;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+
+      const m4 = new THREE.Matrix4();
+      const col = new THREE.Color();
+      const baseColors = new Float32Array(n * 3);
+      const scales = d.baseScale.slice(); // live visual scales (0 = hidden)
+      for (let i = 0; i < n; i++) {
+        const x = d.positions[i * 3], y = d.positions[i * 3 + 1], z = d.positions[i * 3 + 2];
+        const sc = scales[i];
+        m4.makeScale(sc, sc, sc).setPosition(x, y, z);
+        mesh.setMatrixAt(i, m4);
+        col.set(CLUSTER_COLORS[d.clusterIdx[i] % CLUSTER_COLORS.length] || '#888888');
+        mesh.setColorAt(i, col);
+        baseColors[i * 3] = col.r; baseColors[i * 3 + 1] = col.g; baseColors[i * 3 + 2] = col.b;
+      }
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+
+      // GPU upload budget: edges arrive length-sorted, so the cut keeps the
+      // short structural ones. Never silent.
+      const e = d.edgeCount;
+      const uploadCount = Math.min(e, MAX_GPU_EDGES);
+      if (uploadCount < e) {
+        log(`[perf] aristas GPU recortadas: ${uploadCount.toLocaleString()} de ${e.toLocaleString()} (cortas primero)`);
+      }
+      const linePos = new Float32Array(uploadCount * 6);
+      const lineCol = new Uint8Array(uploadCount * 6);
+      for (let i = 0; i < uploadCount; i++) {
+        const si = d.edgeSrc[i];
+        const ti = d.edgeDst[i];
+        if (si < 0 || ti < 0) continue; // both verts stay at origin, zero-length
+        linePos[i * 6]     = d.positions[si * 3];
+        linePos[i * 6 + 1] = d.positions[si * 3 + 1];
+        linePos[i * 6 + 2] = d.positions[si * 3 + 2];
+        linePos[i * 6 + 3] = d.positions[ti * 3];
+        linePos[i * 6 + 4] = d.positions[ti * 3 + 1];
+        linePos[i * 6 + 5] = d.positions[ti * 3 + 2];
         for (let v = 0; v < 2; v++) {
           const ni = v === 0 ? si : ti;
           lineCol[i * 6 + v * 3]     = baseColors[ni * 3] * 255;
@@ -5365,7 +5542,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         vertexColors: true,
         transparent: true,
         opacity: VFX.linkAlpha.val * PERF_EDGE_ALPHA_SCALE,
-        depthWrite: false, // 365k translucent segments — avoid z-fighting churn
+        depthWrite: false, // millions of translucent segments — avoid z churn
       });
       const lines = new THREE.LineSegments(lineGeo, lineMat);
       lines.frustumCulled = false;
@@ -5373,9 +5550,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       Graph.scene().add(mesh);
       Graph.scene().add(lines);
       perf = { mesh, lines, sphereGeo, nodeMat, lineGeo, lineMat,
-               positions, baseColors, scales, linePos, lineCol,
-               edgeSrc, edgeDst, nodes, edges: orderedEdges, idToIndex,
-               origPositions: positions.slice(), // for ARRANGE // ORIGINAL
+               count: n, edgeCount: e, uploadCount,
+               positions: d.positions, baseColors, scales,
+               clusterIdx: d.clusterIdx, baseScale: d.baseScale,
+               linePos, lineCol,
+               edgeSrc: d.edgeSrc, edgeDst: d.edgeDst,
+               nodes: null, edges: null, idToIndex: null,
+               nodeAt: null, indexOfId: null,
+               origPositions: d.positions.slice(), // for ARRANGE // ORIGINAL
                handlers: {}, hoverIdx: -1 };
     }
 
@@ -5410,7 +5592,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const TOL_PX = 8;
       const p = perf.positions;
       let best = -1, bestT = Infinity;
-      for (let i = 0; i < perf.nodes.length; i++) {
+      for (let i = 0; i < perf.count; i++) {
         if (perf.scales[i] === 0) continue; // hidden by tag filter
         const dx = p[i * 3] - ro.x, dy = p[i * 3 + 1] - ro.y, dz = p[i * 3 + 2] - ro.z;
         const t = dx * rd.x + dy * rd.y + dz * rd.z;   // distance along ray
@@ -5419,7 +5601,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         const r = perf.scales[i] + TOL_PX * pxWorld * t;
         if (px * px + py * py + pz * pz < r * r) { best = i; bestT = t; }
       }
-      return best >= 0 ? perf.nodes[best] : null;
+      return best >= 0 ? perf.nodeAt(best) : null;
     }
 
     function perfSetInstanceScale(i, s) {
@@ -5454,7 +5636,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         if (now - lastMove < 33) return; // ~30 Hz
         lastMove = now;
         const node = perfPickNode(ev.clientX, ev.clientY);
-        const idx = node ? perf.idToIndex.get(node.id) : -1;
+        const idx = node ? perf.indexOfId(node.id) : -1;
         if (idx === perf.hoverIdx) return;
         // restore previous hover scale
         if (perf.hoverIdx >= 0) perfSetInstanceScale(perf.hoverIdx, perf.scales[perf.hoverIdx]);
@@ -5473,10 +5655,29 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // Single source of truth for node/edge colors in perf mode. Recomputes the
     // full instanceColor + edge color buffers from {selectedNode, hiddenTags}.
     // Runs on click/filter (~10ms for 36k/365k), NEVER per hover frame.
+    // Neighbor mask by INDEX (works for both JSON and kbin modes; string Sets
+    // don't scale to 20M-edge graphs).
+    function perfNeighborMask(selIdx) {
+      const mask = new Uint8Array(perf.count);
+      if (perfData) {
+        const { csrOff, csrNbr } = perfData;
+        for (let k = csrOff[selIdx]; k < csrOff[selIdx + 1]; k++) mask[csrNbr[k]] = 1;
+      } else if (perf.nodes) {
+        const set = neighborSets[perf.nodes[selIdx].id];
+        if (set) for (const id of set) {
+          const j = perf.indexOfId(id);
+          if (j >= 0) mask[j] = 1;
+        }
+      }
+      return mask;
+    }
+
     function perfApplyHighlight() {
       if (!perf) return;
-      const nbrs = selectedNode ? (neighborSets[selectedNode.id] || new Set()) : null;
-      const selIdx = selectedNode ? perf.idToIndex.get(selectedNode.id) : -1;
+      const selIdx = selectedNode
+        ? (perf.indexOfId ? perf.indexOfId(selectedNode.id) : -1)
+        : -1;
+      const mask = selIdx >= 0 ? perfNeighborMask(selIdx) : null;
       const col = new THREE.Color();
       // "Transparency" for non-neighbors: InstancedMesh has no per-instance
       // opacity, so we fake it — blend the color toward the BACKGROUND (reads
@@ -5486,12 +5687,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const SHRINK = 0.45;     // non-neighbor scale factor while a selection is active
       const bg = new THREE.Color(VFX.bgColor.val);
 
-      const nodeVisible = new Uint8Array(perf.nodes.length);
-      perf.nodes.forEach((node, i) => {
-        const hidden = hiddenTags.has(String(node.cluster_id));
+      const nodeVisible = new Uint8Array(perf.count);
+      for (let i = 0; i < perf.count; i++) {
+        const hidden = hiddenTags.has(String(perf.clusterIdx[i]));
         nodeVisible[i] = hidden ? 0 : 1;
-        const baseS = node.is_medoid ? 5 : 3;
-        const dimmed = nbrs && i !== selIdx && !nbrs.has(node.id);
+        const baseS = perf.baseScale[i];
+        const dimmed = mask && i !== selIdx && !mask[i];
         // scale: 0 hides; dimmed nodes shrink (perf.scales feeds picking and
         // hover-restore, so keep the visual scale there)
         perf.scales[i] = hidden ? 0 : (dimmed ? baseS * SHRINK : baseS);
@@ -5505,12 +5706,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         }
         col.setRGB(r, g, b);
         perf.mesh.setColorAt(i, col);
-      });
+      }
       if (perf.mesh.instanceColor) perf.mesh.instanceColor.needsUpdate = true;
 
       // Edges: bright if incident to the selection, dimmed otherwise, collapsed
       // to zero length if either endpoint is hidden (rasterizes nothing).
-      const e = perf.edgeSrc.length;
+      const e = perf.uploadCount;
       const pos = perf.lineGeo.getAttribute('position');
       const colAttr = perf.lineGeo.getAttribute('color');
       const p = perf.positions;
@@ -5533,7 +5734,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         const incident = selIdx >= 0 && (si === selIdx || ti === selIdx);
         // non-incident edges sink almost fully into the background (edge
         // "transparency" — vertex colors are vec3, so blend instead of alpha)
-        const f = (nbrs && !incident) ? 0.06 : 1;
+        const f = (mask && !incident) ? 0.06 : 1;
         for (let v = 0; v < 2; v++) {
           const ni = v === 0 ? si : ti;
           perf.lineCol[i * 6 + v * 3]     = (perf.baseColors[ni * 3] * f + bg.r * (1 - f)) * 255;
@@ -5697,13 +5898,91 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     function perfRebuildBaseColors() {
       if (!perf) return;
       const col = new THREE.Color();
-      perf.nodes.forEach((node, i) => {
-        col.set(CLUSTER_COLORS[node.cluster_id % CLUSTER_COLORS.length] || '#888888');
+      for (let i = 0; i < perf.count; i++) {
+        col.set(CLUSTER_COLORS[perf.clusterIdx[i] % CLUSTER_COLORS.length] || '#888888');
         perf.baseColors[i * 3] = col.r;
         perf.baseColors[i * 3 + 1] = col.g;
         perf.baseColors[i * 3 + 2] = col.b;
-      });
+      }
       perfApplyHighlight();
+    }
+
+    // Array-native spiral galaxy: same math as computeSpiralGalaxyLayout but
+    // over typed arrays (kbin mode has no per-node objects). clusterIdx acts
+    // as the domain; edges come as index pairs.
+    function computeSpiralGalaxyLayoutIdx(out, clusterIdx, edgeSrc, edgeDst, n, radius = 1400) {
+      const ARMS = 4;
+      const SWIRL = 2.4 * Math.PI;
+      const deg = new Float64Array(n);
+      const e = edgeSrc.length;
+      for (let i = 0; i < e; i++) {
+        const a = edgeSrc[i], b = edgeDst[i];
+        if (a < 0 || b < 0) continue;
+        deg[a]++; deg[b]++;
+      }
+      let maxDeg = 1;
+      for (let i = 0; i < n; i++) if (deg[i] > maxDeg) maxDeg = deg[i];
+      const logMax = Math.log1p(maxDeg);
+      const rankNorm = new Float64Array(n);
+      {
+        const order = Array.from({ length: n }, (_, i) => i)
+          .sort((a, b) => deg[b] - deg[a]);
+        for (let r = 0; r < n; r++) rankNorm[order[r]] = (r + 0.5) / n;
+      }
+      let seed = 1234567;
+      const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+      const gauss = () => (rnd() + rnd() + rnd() - 1.5) / 1.5;
+
+      // domain sizes/arms from clusterIdx
+      const domSize = new Map(), domBase = new Map();
+      for (let i = 0; i < n; i++) {
+        const k = clusterIdx[i];
+        domSize.set(k, (domSize.get(k) || 0) + 1);
+        if (!domBase.has(k)) domBase.set(k, domBase.size % ARMS);
+      }
+      const armShare = n / ARMS;
+      const rrArr = new Float64Array(n);
+      const thArr = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        const k = clusterIdx[i];
+        const sz = domSize.get(k);
+        const spread = sz < armShare * 0.6
+          ? ARMS
+          : Math.max(1, Math.min(ARMS, Math.ceil(sz / armShare)));
+        const arm = (domBase.get(k) + ((rnd() * spread) | 0)) % ARMS;
+        const tLog = 1 - Math.log1p(deg[i]) / logMax;
+        const t = 0.6 * tLog + 0.4 * rankNorm[i];
+        const rNorm = Math.min(1, Math.max(0.02, Math.pow(t, 1.25) + gauss() * 0.05));
+        rrArr[i] = radius * (0.05 + 0.95 * rNorm);
+        thArr[i] = arm * (2 * Math.PI / ARMS)
+                 + (rrArr[i] / radius) * SWIRL
+                 + gauss() * (0.18 + 0.5 * (1 - rrArr[i] / radius));
+      }
+      // tree-aware pass (same as object twin)
+      {
+        const bestNbr = new Int32Array(n).fill(-1);
+        for (let i = 0; i < e; i++) {
+          const a = edgeSrc[i], b = edgeDst[i];
+          if (a < 0 || b < 0) continue;
+          if (bestNbr[a] < 0 || deg[b] > deg[bestNbr[a]]) bestNbr[a] = b;
+          if (bestNbr[b] < 0 || deg[a] > deg[bestNbr[b]]) bestNbr[b] = a;
+        }
+        for (let pass = 0; pass < 2; pass++) {
+          for (let i = 0; i < n; i++) {
+            const nb = bestNbr[i];
+            if (deg[i] <= 2 && nb >= 0 && deg[nb] > deg[i]) {
+              thArr[i] = thArr[nb] + gauss() * 0.18;
+            }
+          }
+        }
+      }
+      for (let i = 0; i < n; i++) {
+        const rr = rrArr[i];
+        const thick = radius * (0.15 * Math.pow(1 - rr / radius, 1.6) + 0.02);
+        out[i * 3] = rr * Math.cos(thArr[i]);
+        out[i * 3 + 1] = gauss() * thick;
+        out[i * 3 + 2] = rr * Math.sin(thArr[i]);
+      }
     }
 
     // Animate the graph between arrangements from wherever the nodes are.
@@ -5717,20 +5996,20 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       if (gpuSim) { _simAborted = true; gpuSim.dispose(); gpuSim = null; }
       const ease = t => 1 - Math.pow(1 - t, 3);
       if (perfMode && perf) {
-        const n = perf.nodes.length;
+        const n = perf.count;
         const start = perf.positions.slice();
         const target = new Float32Array(n * 3);
         if (mode === 'original') {
           target.set(perf.origPositions);
-          perf.nodes.forEach((nd, i) => {
-            nd.x = target[i * 3]; nd.y = target[i * 3 + 1]; nd.z = target[i * 3 + 2];
-          });
-        } else {
+        } else if (perf.nodes && mode !== 'spiral') {
           if (mode === 'sphere') computeFallbackLayout(perf.nodes, perf.edges);
-          else computeSpiralGalaxyLayout(perf.nodes, perf.edges);
           perf.nodes.forEach((nd, i) => {
             target[i * 3] = nd.x; target[i * 3 + 1] = nd.y; target[i * 3 + 2] = nd.z;
           });
+        } else {
+          // spiral: array-native (works for kbin's typed data AND JSON)
+          computeSpiralGalaxyLayoutIdx(target, perf.clusterIdx,
+                                       perf.edgeSrc, perf.edgeDst, perf.count);
         }
         let maxR2 = 0;
         for (let k = 0; k < n * 3; k += 3) {
@@ -5772,7 +6051,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
             perf.mesh.setMatrixAt(i, m4);
           }
           perf.mesh.instanceMatrix.needsUpdate = true;
-          for (let i = 0; i < perf.edgeSrc.length; i++) {
+          for (let i = 0; i < perf.uploadCount; i++) {
             const si = perf.edgeSrc[i], ti = perf.edgeDst[i];
             if (si < 0 || ti < 0) continue;
             for (let k = 0; k < 3; k++) {
@@ -5784,7 +6063,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           if (t < 1) { _galaxyAnimRAF = requestAnimationFrame(step); }
           else {
             _galaxyAnimRAF = null;
-            perf.nodes.forEach((nd, i) => {
+            // JSON mode keeps the rich records' coords in sync (kbin records
+            // are materialized fresh from perf.positions — nothing to sync)
+            if (perf.nodes) perf.nodes.forEach((nd, i) => {
               nd.x = perf.positions[i * 3];
               nd.y = perf.positions[i * 3 + 1];
               nd.z = perf.positions[i * 3 + 2];
@@ -5856,7 +6137,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       if (!perfMode || !perf) return;
       _edgeDensityIdx = (_edgeDensityIdx + 1) % EDGE_DENSITY_STEPS.length;
       const f = EDGE_DENSITY_STEPS[_edgeDensityIdx];
-      perf.lineGeo.setDrawRange(0, Math.floor(perf.edgeSrc.length * f) * 2);
+      perf.lineGeo.setDrawRange(0, Math.floor(perf.uploadCount * f) * 2);
       setBootStage(`ARISTAS // ${Math.round(f * 100)}%`, 'cortas primero · E cicla');
       setTimeout(hideBootStatus, 1500);
     }
@@ -5914,7 +6195,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
             // the settled arrangement becomes the graph's ORIGINAL (G cycles
             // back to it) and the camera reframes to its final shape
             perf.origPositions.set(perf.positions);
-            perf.nodes.forEach((nd, i) => {
+            if (perf.nodes) perf.nodes.forEach((nd, i) => {
               nd.x = perf.positions[i * 3];
               nd.y = perf.positions[i * 3 + 1];
               nd.z = perf.positions[i * 3 + 2];
@@ -5939,16 +6220,16 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
             }
             log(`[perfSim] tick=${ticks} nonfinite=${bad} maxR=${Math.sqrt(r2max).toFixed(1)}`);
           }
-          for (let i = 0; i < perf.nodes.length; i++) {
+          for (let i = 0; i < perf.count; i++) {
             const s = perf.scales[i] || 0.0001;
             const x = perf.positions[i * 3], y = perf.positions[i * 3 + 1], z = perf.positions[i * 3 + 2];
             m4.makeScale(s, s, s).setPosition(x, y, z);
             perf.mesh.setMatrixAt(i, m4);
-            // keep node records in sync (picking + click camera-fly)
-            perf.nodes[i].x = x; perf.nodes[i].y = y; perf.nodes[i].z = z;
+            // keep JSON records in sync (kbin materializes from positions)
+            if (perf.nodes) { perf.nodes[i].x = x; perf.nodes[i].y = y; perf.nodes[i].z = z; }
           }
           perf.mesh.instanceMatrix.needsUpdate = true;
-          for (let i = 0; i < perf.edgeSrc.length; i++) {
+          for (let i = 0; i < perf.uploadCount; i++) {
             const si = perf.edgeSrc[i], ti = perf.edgeDst[i];
             if (si < 0 || ti < 0) continue;
             for (let k = 0; k < 3; k++) {
@@ -5992,11 +6273,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       if (_resizeHandler) { window.removeEventListener('resize', _resizeHandler); _resizeHandler = null; }
 
       // ── Perf-mode decision ─────────────────────────────────────────────────
-      perfMode = PERF_OVERRIDE === '1' ? true
+      const _n = perfData ? perfData.count : nodes.length;
+      const _e = perfData ? perfData.edgeCount : edges.length;
+      perfMode = perfData ? true
+               : PERF_OVERRIDE === '1' ? true
                : PERF_OVERRIDE === '0' ? false
-               : isExternalGraph && (nodes.length > PERF_NODE_THRESHOLD || edges.length > PERF_EDGE_THRESHOLD);
+               : isExternalGraph && (_n > PERF_NODE_THRESHOLD || _e > PERF_EDGE_THRESHOLD);
       _usedFallbackLayout = false;
-      if (perfMode && !hasBakedLayout(nodes)) {
+      if (perfMode && !perfData && !hasBakedLayout(nodes)) {
         _usedFallbackLayout = true;
         if (PERF_SIM_PARAM !== '0' && ('gpu' in navigator)) {
           // physics relax will run: seed with a RANDOM ball. A spiral seed
@@ -6035,9 +6319,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       }));
 
       // Build neighbor lookups for only the active topology's edges
-      // (perf mode included — feeds the detail panel and highlight)
-      const activeEdges = edges.filter(e => e.topology === currentLayout);
-      rebuildLookups(nodes, activeEdges);
+      // (perf mode included — feeds the detail panel and highlight).
+      // kbin mode uses the CSR arrays built at parse time instead.
+      if (!perfData) {
+        const activeEdges = edges.filter(e => e.topology === currentLayout);
+        rebuildLookups(nodes, activeEdges);
+      }
 
       Graph = ForceGraph3D()
         (document.getElementById('graph'))
@@ -6264,12 +6551,28 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       // Perf mode: build the instanced scene (after bloom so passes see it) and
       // wire custom picking (graphData is empty — built-in raycast is blind).
       if (perfMode) {
-        const hadBake = hasBakedLayout(nodes) && !_usedFallbackLayout;
-        buildPerfScene(nodes, edges);
+        const hadBake = perfData ? true : (hasBakedLayout(nodes) && !_usedFallbackLayout);
+        if (perfData) {
+          const d = perfData;
+          buildPerfCore({
+            count: d.count, edgeCount: d.edgeCount,
+            positions: d.positions,
+            clusterIdx: d.domainIdx, // u8 works — indexed the same way
+            baseScale: new Float32Array(d.count).fill(3),
+            edgeSrc: d.edgeSrc, edgeDst: d.edgeDst,
+          });
+          perf.nodeAt = kbinNodeAt;
+          perf.indexOfId = kbinFindIndex;
+        } else {
+          buildPerfScene(nodes, edges);
+        }
         initPerfPicking();
-        // dynamic "esférica": relax coord-less graphs with real physics
+        // dynamic "esférica": relax coord-less graphs with real physics.
+        // kbin mode: gated off until the Barnes-Hut charge lands (F3) — the
+        // O(N²) kernel would take minutes per tick at 1M+ nodes.
         const wantSim = PERF_SIM_PARAM === '1' || (PERF_SIM_PARAM !== '0' && !hadBake);
-        if (wantSim) perfRunLiveSim(nodes, edges); // fire-and-forget, bounded
+        if (wantSim && !perfData) perfRunLiveSim(nodes, edges); // fire-and-forget, bounded
+        else if (wantSim && perfData) log('[perfSim] kbin: relax deshabilitado hasta Barnes-Hut (F3)');
       }
       // If the galaxy theme is active, dress the fresh scene again (teardown
       // removed the previous starfield with the old scene).
@@ -6358,7 +6661,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
               // (unless the user's manual E density is already lower).
               if (perfMode && perf && !perf._rangeCut && EDGE_DENSITY_STEPS[_edgeDensityIdx] > 0.4) {
                 perf._rangeCut = true;
-                perf.lineGeo.setDrawRange(0, Math.floor(perf.edgeSrc.length * 0.4) * 2);
+                perf.lineGeo.setDrawRange(0, Math.floor(perf.uploadCount * 0.4) * 2);
               }
               fpsRecoveryFrames = 0;
             } else if (avgFps < 30) {
@@ -6382,7 +6685,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
                   perf._rangeCut = false;
                   // restore to the user's manual density, not blindly to 100%
                   const f = EDGE_DENSITY_STEPS[_edgeDensityIdx];
-                  perf.lineGeo.setDrawRange(0, f >= 1 ? Infinity : Math.floor(perf.edgeSrc.length * f) * 2);
+                  perf.lineGeo.setDrawRange(0, f >= 1 ? Infinity : Math.floor(perf.uploadCount * f) * 2);
                 }
                 Graph.refresh();
                 const qualityLabel = document.querySelector('.quality-reduced-label');
@@ -6497,11 +6800,17 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       // Count nodes per cluster (perf mode: graphData is empty — use the
       // instanced node list instead)
       const clusterCounts = {};
-      const legendNodes = perfMode && perf ? perf.nodes : (Graph ? Graph.graphData().nodes : []);
-      legendNodes.forEach(n => {
-        const cid = String(n.cluster_id);
-        clusterCounts[cid] = (clusterCounts[cid] || 0) + 1;
-      });
+      if (perfMode && perf) {
+        for (let i = 0; i < perf.count; i++) {
+          const cid = String(perf.clusterIdx[i]);
+          clusterCounts[cid] = (clusterCounts[cid] || 0) + 1;
+        }
+      } else if (Graph) {
+        Graph.graphData().nodes.forEach(n => {
+          const cid = String(n.cluster_id);
+          clusterCounts[cid] = (clusterCounts[cid] || 0) + 1;
+        });
+      }
 
       Object.entries(clusterNames).forEach(([id, name]) => {
         const color = CLUSTER_COLORS[id % CLUSTER_COLORS.length];
@@ -7422,7 +7731,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         const e = _htVP.elements;
         const w2 = window.innerWidth / 2, h2 = window.innerHeight / 2;
         const p = perf.positions;
-        for (let i = 0; i < perf.nodes.length; i++) {
+        for (let i = 0; i < perf.count; i++) {
           if (perf.scales[i] === 0) continue; // hidden by tag filter
           const x = p[i * 3], y = p[i * 3 + 1], z = p[i * 3 + 2];
           const cw = e[3] * x + e[7] * y + e[11] * z + e[15];
@@ -7430,9 +7739,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           const cx = (e[0] * x + e[4] * y + e[8] * z + e[12]) / cw;
           const cy = (e[1] * x + e[5] * y + e[9] * z + e[13]) / cw;
           const d = Math.hypot((cx + 1) * w2 - sx, (1 - cy) * h2 - sy);
-          if (d < bestD) { bestD = d; best = perf.nodes[i]; }
+          if (d < bestD) { bestD = d; best = i; }
         }
-        return bestD < 100 ? { node: best, d: bestD } : null;
+        return (best >= 0 && bestD < 100) ? { node: perf.nodeAt(best), d: bestD } : null;
       }
       Graph.graphData().nodes.forEach(n => {
         const sc = Graph.graph2ScreenCoords(n.x, n.y, n.z);

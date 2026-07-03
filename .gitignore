@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 .venv/
 .nodeviz-chrome-profile/
+graphs/oax_full.kbin
