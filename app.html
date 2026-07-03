@@ -5975,8 +5975,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
                : PERF_OVERRIDE === '0' ? false
                : isExternalGraph && (nodes.length > PERF_NODE_THRESHOLD || edges.length > PERF_EDGE_THRESHOLD);
       if (perfMode && !hasBakedLayout(nodes)) {
-        setBootStage('COMPUTING LAYOUT…', 'radial galaxy — bake with graph_layout.py --algo drl for organic layout');
-        computeFallbackLayout(nodes, edges);
+        setBootStage('COMPUTING LAYOUT…', 'spiral galaxy — bake with graph_layout.py --algo drl for organic layout');
+        computeSpiralGalaxyLayout(nodes, edges);
       }
       // Small graph WITH baked layout → pin positions, skip physics entirely:
       // pruned graphs processed by graph_layout.py load instantly.
@@ -6646,6 +6646,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     // App state: 'onboarding' | 'ready'
     let appState = 'onboarding';
+    // Gesture grace: ignore hand input briefly after the tutorial ends so the
+    // raised hand (you just did fist/peace) can't yank the freshly framed
+    // camera into an oblique mess while you lower it.
+    let ht_graceUntil = 0;
 
     // Onboarding graph instance (separate from Graph/real graph)
     let ObGraph = null;
@@ -6868,6 +6872,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         // coords to wherever the camera is.
         document.getElementById('graph').style.visibility = 'visible';
         ht_syncSpherical();
+        ht_graceUntil = performance.now() + 2000;
         appState = 'ready';
       }, 800);
     }
@@ -7548,6 +7553,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const rawGesture = ht_gesture(lm);
       if (DEBUG) ht_dbgInfo = rawGesture + ' ' + ht_extendedState.map(b => b ? '1' : '0').join('');
       const gesture    = ht_debouncedGesture(rawGesture);
+
+      // Post-tutorial grace: swallow gestures while the user lowers the hand
+      if (performance.now() < ht_graceUntil) {
+        ht_prevX = null; ht_prevY = null;
+        ht_twoHandPrevDist = null;
+        ht_setLabel('LISTO ✋→ BAJA LA MANO');
+        return;
+      }
 
       // ── Pinch (index tip ↔ thumb tip) → instant select while hovering ────
       // Checked before gesture branching: closing the pinch bends the index,

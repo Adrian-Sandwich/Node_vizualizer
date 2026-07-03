@@ -136,6 +136,81 @@ def layout_radial(nodes, edges, radius):
              dirs[i][2] * radii[i]) for i in range(n)]
 
 
+
+def layout_spiral(nodes, edges, radius):
+    """Spiral galaxy (the app's signature look — mirrored in app.html
+    computeSpiralGalaxyLayout, keep in sync): 4 logarithmic arms twisting
+    with radius, degree-rank orbits (hubs in the core), tree-aware angle
+    inheritance so sparse graphs form branches, disc with a central bulge.
+    Deterministic, dependency-free."""
+    ARMS = 4
+    SWIRL = 2.4 * math.pi
+    n = len(nodes)
+    idx = {node["id"]: i for i, node in enumerate(nodes)}
+    deg = [0] * n
+    pairs = []
+    for e in edges:
+        a, b = idx.get(e["from"]), idx.get(e["to"])
+        if a is None or b is None:
+            continue
+        deg[a] += 1
+        deg[b] += 1
+        pairs.append((a, b))
+    max_deg = max(deg) or 1
+    log_max = math.log1p(max_deg)
+    order = sorted(range(n), key=lambda i: -deg[i])
+    rank_norm = [0.0] * n
+    for r, i in enumerate(order):
+        rank_norm[i] = (r + 0.5) / n
+
+    seed = [1234567]
+    def rnd():
+        seed[0] = (seed[0] * 1664525 + 1013904223) % 4294967296
+        return seed[0] / 4294967296.0
+    def gauss():
+        return (rnd() + rnd() + rnd() - 1.5) / 1.5
+
+    dom_size, dom_base = {}, {}
+    for node in nodes:
+        k = node.get("domain") or "default"
+        dom_size[k] = dom_size.get(k, 0) + 1
+        if k not in dom_base:
+            dom_base[k] = len(dom_base) % ARMS
+    arm_share = n / ARMS
+
+    rr = [0.0] * n
+    th = [0.0] * n
+    for i, node in enumerate(nodes):
+        k = node.get("domain") or "default"
+        spread = max(1, min(ARMS, math.ceil(dom_size[k] / arm_share)))
+        arm = (dom_base[k] + int(rnd() * spread)) % ARMS
+        t_log = 1.0 - math.log1p(deg[i]) / log_max
+        t = 0.6 * t_log + 0.4 * rank_norm[i]
+        r_norm = min(1.0, max(0.02, t ** 1.25 + gauss() * 0.05))
+        rr[i] = radius * (0.05 + 0.95 * r_norm)
+        th[i] = (arm * (2 * math.pi / ARMS)
+                 + (rr[i] / radius) * SWIRL
+                 + gauss() * (0.18 + 0.5 * (1 - rr[i] / radius)))
+
+    best_nbr = [-1] * n
+    for a, b in pairs:
+        if best_nbr[a] < 0 or deg[b] > deg[best_nbr[a]]:
+            best_nbr[a] = b
+        if best_nbr[b] < 0 or deg[a] > deg[best_nbr[b]]:
+            best_nbr[b] = a
+    for _ in range(2):
+        for i in range(n):
+            nb = best_nbr[i]
+            if deg[i] <= 2 and nb >= 0 and deg[nb] > deg[i]:
+                th[i] = th[nb] + gauss() * 0.18
+
+    coords = []
+    for i in range(n):
+        thick = radius * (0.15 * (1 - rr[i] / radius) ** 1.6 + 0.02)
+        coords.append((rr[i] * math.cos(th[i]), gauss() * thick, rr[i] * math.sin(th[i])))
+    return coords
+
+
 def layout_igraph(nodes, edges, algo, seed):
     import igraph  # noqa: deferred so --algo sphere works without it
 
@@ -175,7 +250,7 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
     ap.add_argument("-o", "--output", help="default: overwrite input")
-    ap.add_argument("--algo", choices=["drl", "fr", "radial", "sphere"], default="drl")
+    ap.add_argument("--algo", choices=["drl", "fr", "spiral", "radial", "sphere"], default="drl")
     ap.add_argument("--radius", type=float, default=1400.0,
                     help="95th-percentile radius of the final layout (default 1400 ≈ app SCALE*5)")
     ap.add_argument("--seed", type=int, default=42)
@@ -189,15 +264,17 @@ def main():
         try:
             import igraph  # noqa
         except ImportError:
-            print("WARNING: python-igraph not installed — falling back to --algo radial.\n"
+            print("WARNING: python-igraph not installed — falling back to --algo spiral.\n"
                   "  install: python3 -m venv .venv && .venv/bin/pip install python-igraph",
                   file=sys.stderr)
-            algo = "radial"
+            algo = "spiral"
 
     print(f"[graph_layout] {len(nodes)} nodes / {len(edges)} edges, algo={algo}",
           file=sys.stderr)
     if algo == "sphere":
         coords = layout_sphere(nodes, edges, args.radius)
+    elif algo == "spiral":
+        coords = layout_spiral(nodes, edges, args.radius)
     elif algo == "radial":
         coords = layout_radial(nodes, edges, args.radius)
     else:
