@@ -6403,6 +6403,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       // _simAborted stops the sim's pending end-block from re-framing the
       // camera / rewriting node coords on its next rAF.
       if (gpuSim) { _simAborted = true; gpuSim.dispose(); gpuSim = null; }
+      if (perf && perf.lines) perf.lines.visible = true;
       const ease = t => 1 - Math.pow(1 - t, 3);
       if (perfMode && perf) {
         const n = perf.count;
@@ -6557,20 +6558,35 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     // G / GALAXY button: first press enters the galaxy view (theme + spiral),
     // each further press cycles the arrangement.
-    const ARRANGE_CYCLE = ['spiral', 'original'];
+    const ARRANGE_LABEL = { spiral: 'SPIRAL', original: 'ORIGINAL', relax: 'ESFÉRICO' };
     let _arrangeIdx = -1;
     function goGalaxy() {
       if (currentTheme !== 'galaxy') applyTheme('galaxy');
-      _arrangeIdx = (_arrangeIdx + 1) % ARRANGE_CYCLE.length;
-      const mode = ARRANGE_CYCLE[_arrangeIdx];
-      galaxyArrange(mode);
-      setBootStage(`ARRANGE // ${mode.toUpperCase()}`, 'G alterna: espiral ↔ original');
+      // relax (GPU physics settle) only exists on the perf path
+      const cycle = (perfMode && perf) ? ['spiral', 'original', 'relax']
+                                       : ['spiral', 'original'];
+      _arrangeIdx = (_arrangeIdx + 1) % cycle.length;
+      const mode = cycle[_arrangeIdx];
+      if (mode === 'relax') {
+        if (_galaxyAnimRAF) { cancelAnimationFrame(_galaxyAnimRAF); _galaxyAnimRAF = null; }
+        if (gpuSim) { _simAborted = true; gpuSim.dispose(); gpuSim = null; }
+        perfRunLiveSim(perf.nodes || [], perf.edges || []);
+        setBootStage('ARRANGE // ESFÉRICO', 'física GPU (Barnes-Hut) hasta asentar');
+      } else {
+        galaxyArrange(mode);
+        setBootStage(`ARRANGE // ${ARRANGE_LABEL[mode]}`, 'G cicla: espiral → original → esférico');
+      }
       setTimeout(hideBootStatus, 1800);
       const btn = document.getElementById('galaxy-btn');
-      if (btn) btn.textContent = `✦ ${mode.toUpperCase()}`;
+      if (btn) btn.textContent = `✦ ${ARRANGE_LABEL[mode]}`;
     }
 
     let _simAborted = false;
+    // harness/debug hook: closure state is unreachable from the console
+    window.NVZ_DEBUG = {
+      get perf() { return perf; }, get Graph() { return Graph; },
+      get gpuSim() { return gpuSim; },
+    };
     // Verification protocol (design step a): one charge-isolated tick on the
     // SAME initial state through the exact O(N²) kernel and the grid
     // Barnes-Hut, compare velocity directions/magnitudes. ?bhtest=1 runs it
@@ -6670,13 +6686,20 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       gpuSim.setChargeStrength(-8);
       gpuSim.setLinkStrength(0.02, 60); // also flushes positionStrength via _writeParams
       const m4 = new THREE.Matrix4();
+      // points-only physics view: mid-settle stretched edges white out the
+      // whole screen, so the line object hides until the layout settles
+      if (perf.lines) perf.lines.visible = false;
       // adaptive settle budget: small graphs afford more refinement ticks
-      const MAX_TICKS = Math.round(Math.min(600, Math.max(180, 30e6 / Math.max(1, edges.length))));
+      const simEdges = (edges && edges.length) || perf.edgeCount || 1;
+      // floor 300: million-node graphs need the ticks (BH + strobe keeps
+      // per-tick cost flat); ceiling 600 still bounds small-graph refinement
+      const MAX_TICKS = Math.round(Math.min(600, Math.max(300, 30e6 / simEdges)));
       let ticks = 0;
       setBootStage('LIVE GPU SIM…', 'relaxing layout');
       const loop = () => {
         if (!gpuSim || gpuSim._disposed || !perf || ticks >= MAX_TICKS) {
           if (gpuSim) { gpuSim.dispose(); gpuSim = null; }
+          if (perf && perf.lines) perf.lines.visible = true;
           if (_simAborted) { _simAborted = false; return; } // user took control
           if (perf) {
             // the settled arrangement becomes the graph's ORIGINAL (G cycles
@@ -6738,10 +6761,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
             }
           }
           perf.lineGeo.getAttribute('position').needsUpdate = true;
+          // pull the camera out as the cloud expands — without this the view
+          // sits inside the exploding layout for the whole settle
+          if (ticks % 45 === 0) { perf._boundR = 0; perfFrameCamera(900); }
           requestAnimationFrame(loop);
         }).catch(e => {
           console.warn('[perfSim] tick error:', e);
           if (gpuSim) { gpuSim.dispose(); gpuSim = null; }
+          if (perf && perf.lines) perf.lines.visible = true;
         });
       };
       requestAnimationFrame(loop);
