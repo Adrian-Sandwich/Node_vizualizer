@@ -182,7 +182,9 @@ def layout_spiral(nodes, edges, radius):
     th = [0.0] * n
     for i, node in enumerate(nodes):
         k = node.get("domain") or "default"
-        spread = max(1, min(ARMS, math.ceil(dom_size[k] / arm_share)))
+        # small domains sprinkle across all arms (see JS twin)
+        sz = dom_size[k]
+        spread = ARMS if sz < arm_share * 0.6 else max(1, min(ARMS, math.ceil(sz / arm_share)))
         arm = (dom_base[k] + int(rnd() * spread)) % ARMS
         t_log = 1.0 - math.log1p(deg[i]) / log_max
         t = 0.6 * t_log + 0.4 * rank_norm[i]
@@ -190,7 +192,7 @@ def layout_spiral(nodes, edges, radius):
         rr[i] = radius * (0.05 + 0.95 * r_norm)
         th[i] = (arm * (2 * math.pi / ARMS)
                  + (rr[i] / radius) * SWIRL
-                 + gauss() * (0.55 + 0.45 * (1 - rr[i] / radius)))
+                 + gauss() * (0.18 + 0.5 * (1 - rr[i] / radius)))
 
     best_nbr = [-1] * n
     for a, b in pairs:
@@ -202,7 +204,7 @@ def layout_spiral(nodes, edges, radius):
         for i in range(n):
             nb = best_nbr[i]
             if deg[i] <= 2 and nb >= 0 and deg[nb] > deg[i]:
-                th[i] = th[nb] + gauss() * 0.32
+                th[i] = th[nb] + gauss() * 0.18
 
     coords = []
     for i in range(n):

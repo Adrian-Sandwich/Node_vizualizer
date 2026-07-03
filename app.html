@@ -5142,6 +5142,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // instance and would freeze per mousemove.
     // ═══════════════════════════════════════════════════════════════════════
     let perfMode = false;
+    let _usedFallbackLayout = false; // spiral seed applied (no baked coords)
     let perf = null; // { mesh, lines, geos/mats, positions, baseColors, scales, edgeSrc, edgeDst, nodes, idToIndex, handlers, hoverIdx }
     const PERF_NODE_THRESHOLD = 8000;
     const PERF_EDGE_THRESHOLD = 60000;
@@ -5151,11 +5152,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // ?perf=1 forces perf mode on small graphs (pick-precision testing);
     // ?perf=0 forces the normal path.
     const PERF_OVERRIDE = new URLSearchParams(location.search).get('perf');
-    // ?sim=1 (EXPERIMENTAL): after building the perf scene, relax the layout
-    // LIVE with the WebGPU compute force sim (GPUForceSimulation) for a fixed
-    // number of ticks, then freeze. Chrome + WebGPU only; silently skipped
-    // elsewhere.
-    const PERF_SIM = new URLSearchParams(location.search).get('sim') === '1';
+    // Live WebGPU relax (GPUForceSimulation): graphs that arrive WITHOUT a
+    // baked layout get seeded with the spiral and then relaxed by real
+    // physics for a bounded number of ticks — domains mix organically into
+    // the "spherical" look with no per-graph tuning. ?sim=0 disables the
+    // auto-relax; ?sim=1 forces it even for baked layouts. Needs WebGPU
+    // (Chrome); silently skipped elsewhere.
+    const PERF_SIM_PARAM = new URLSearchParams(location.search).get('sim');
 
     function hasBakedLayout(nodes) {
       if (!nodes.length) return false;
@@ -5594,7 +5597,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const thArr = new Float64Array(n);
       nodes.forEach((nd, i) => {
         const k = nd._domain || 'default';
-        const spread = Math.max(1, Math.min(ARMS, Math.ceil(domSize.get(k) / armShare)));
+        // Domains too small to own an arm get sprinkled across ALL arms —
+        // concentrated in one they read as a second galaxy nucleus. Large
+        // domains keep their contiguous arm bands (crisp spiral).
+        const sz = domSize.get(k);
+        const spread = sz < armShare * 0.6
+          ? ARMS
+          : Math.max(1, Math.min(ARMS, Math.ceil(sz / armShare)));
         const arm = (domBase.get(k) + ((rnd() * spread) | 0)) % ARMS;
         const tLog = 1 - Math.log1p(deg[i]) / logMax;      // 0 = hub … 1 = leaf
         const t = 0.6 * tLog + 0.4 * rankNorm[i];           // rank spreads ties
@@ -5602,9 +5611,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         rrArr[i] = radius * (0.05 + 0.95 * rNorm);
         thArr[i] = arm * (2 * Math.PI / ARMS)
                  + (rrArr[i] / radius) * SWIRL
-                 // wide angular scatter: small domains land in ONE arm — with a
-                 // tight ±10° band they read as a dense second nucleus
-                 + gauss() * (0.55 + 0.45 * (1 - rrArr[i] / radius));
+                 + gauss() * (0.18 + 0.5 * (1 - rrArr[i] / radius)); // fuzzier near the core
       });
       // Tree-aware pass: low-degree nodes (leaves/chains) inherit the angle
       // of their best-connected neighbor, so sparse graphs (hierarchies)
@@ -5625,7 +5632,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           for (let i = 0; i < n; i++) {
             const nb = bestNbr[i];
             if (deg[i] <= 2 && nb >= 0 && deg[nb] > deg[i]) {
-              thArr[i] = thArr[nb] + gauss() * 0.32;
+              thArr[i] = thArr[nb] + gauss() * 0.18;
             }
           }
         }
@@ -5704,6 +5711,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // 'original' (positions as loaded). Works in perf and normal modes.
     function galaxyArrange(mode = 'spiral', duration = 2200) {
       if (_galaxyAnimRAF) { cancelAnimationFrame(_galaxyAnimRAF); _galaxyAnimRAF = null; }
+      // take control from a live physics settle — both write perf.positions.
+      // _simAborted stops the sim's pending end-block from re-framing the
+      // camera / rewriting node coords on its next rAF.
+      if (gpuSim) { _simAborted = true; gpuSim.dispose(); gpuSim = null; }
       const ease = t => 1 - Math.pow(1 - t, 3);
       if (perfMode && perf) {
         const n = perf.nodes.length;
@@ -5865,6 +5876,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       if (btn) btn.textContent = `✦ ${mode.toUpperCase()}`;
     }
 
+    let _simAborted = false;
     // EXPERIMENTAL (?sim=1): live GPU relax of the perf-mode layout. Acquires
     // its own WebGPU device (the global gpuAvailable stays false — it gates
     // unrelated dormant paths), runs the existing GPUForceSimulation for a
@@ -5879,31 +5891,38 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         device = await adapter.requestDevice();
       } catch (e) { console.warn('[perfSim] no WebGPU device:', e); return; }
       if (!perf) return; // graph got torn down while we awaited
+      _simAborted = false;
       gpuSim = new GPUForceSimulation(device, nodes, edges, currentLayout, SCALE);
-      // CRITICAL: the constructor fills the position-force target buffer with
-      // ZEROS — the default positionStrength (0.18) then yanks all 36k nodes
-      // into the origin within a few ticks (graph "disappears"), where the
-      // unclamped charge force explodes to NaN. Anchor the targets to the
-      // baked layout and keep the anchor weak: charge+link relax locally
-      // while the galaxy keeps its global shape.
-      const tgt = new Float32Array(nodes.length * 4);
-      nodes.forEach((n, i) => {
-        tgt[i * 4] = n.x || 0;
-        tgt[i * 4 + 1] = n.y || 0;
-        tgt[i * 4 + 2] = n.z || 0;
-      });
-      device.queue.writeBuffer(gpuSim.targetBuffer, 0, tgt);
-      gpuSim.params.positionStrength = 0.03;
-      gpuSim.setChargeStrength(-6);
-      gpuSim.setLinkStrength(0.015, 60); // also flushes positionStrength via _writeParams
+      // The target buffer stays at ZEROS on purpose: with a WEAK strength it
+      // acts as a d3-style centering force (drift/explosion guard) that is
+      // shape-neutral — anchoring to the spiral seed left ghost arms in the
+      // settled result. (The old collapse bug was the DEFAULT 0.18 strength;
+      // at 0.012 charge repulsion equilibrates far from the origin.)
+      gpuSim.params.positionStrength = 0.012;
+      gpuSim.setChargeStrength(-8);
+      gpuSim.setLinkStrength(0.02, 60); // also flushes positionStrength via _writeParams
       const m4 = new THREE.Matrix4();
-      const MAX_TICKS = 240;
+      // adaptive settle budget: small graphs afford more refinement ticks
+      const MAX_TICKS = Math.round(Math.min(600, Math.max(180, 30e6 / Math.max(1, edges.length))));
       let ticks = 0;
       setBootStage('LIVE GPU SIM…', 'relaxing layout');
       const loop = () => {
         if (!gpuSim || gpuSim._disposed || !perf || ticks >= MAX_TICKS) {
           if (gpuSim) { gpuSim.dispose(); gpuSim = null; }
-          if (perf) setBootStage(`LIVE SIM SETTLED // ${ticks} TICKS`, '');
+          if (_simAborted) { _simAborted = false; return; } // user took control
+          if (perf) {
+            // the settled arrangement becomes the graph's ORIGINAL (G cycles
+            // back to it) and the camera reframes to its final shape
+            perf.origPositions.set(perf.positions);
+            perf.nodes.forEach((nd, i) => {
+              nd.x = perf.positions[i * 3];
+              nd.y = perf.positions[i * 3 + 1];
+              nd.z = perf.positions[i * 3 + 2];
+            });
+            perfFrameCamera(1200);
+            setBootStage(`LAYOUT ASENTADO // ${ticks} TICKS`, '');
+            setTimeout(hideBootStatus, 1800);
+          }
           return;
         }
         gpuSim.tick().then(() => {
@@ -5976,9 +5995,31 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       perfMode = PERF_OVERRIDE === '1' ? true
                : PERF_OVERRIDE === '0' ? false
                : isExternalGraph && (nodes.length > PERF_NODE_THRESHOLD || edges.length > PERF_EDGE_THRESHOLD);
+      _usedFallbackLayout = false;
       if (perfMode && !hasBakedLayout(nodes)) {
-        setBootStage('COMPUTING LAYOUT…', 'spiral galaxy — bake with graph_layout.py --algo drl for organic layout');
-        computeSpiralGalaxyLayout(nodes, edges);
+        _usedFallbackLayout = true;
+        if (PERF_SIM_PARAM !== '0' && ('gpu' in navigator)) {
+          // physics relax will run: seed with a RANDOM ball. A spiral seed
+          // biases the result (domains start clustered and plain force layout
+          // only untangles locally — DrL-quality mixing needs an unbiased
+          // start, verified against an offline DrL bake of the same graph).
+          setBootStage('COMPUTING LAYOUT…', 'random seed → physics relax');
+          let seed = 424242;
+          const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+          const R = 1400;
+          for (const nd of nodes) {
+            const r = R * Math.cbrt(rnd());
+            const u = rnd() * 2 - 1, ph = rnd() * Math.PI * 2;
+            const sq = Math.sqrt(1 - u * u);
+            nd.x = r * sq * Math.cos(ph);
+            nd.y = r * u;
+            nd.z = r * sq * Math.sin(ph);
+          }
+        } else {
+          // no WebGPU: the spiral is the best static arrangement we can offer
+          setBootStage('COMPUTING LAYOUT…', 'spiral galaxy (sin WebGPU no hay relax)');
+          computeSpiralGalaxyLayout(nodes, edges);
+        }
       }
       // Small graph WITH baked layout → pin positions, skip physics entirely:
       // pruned graphs processed by graph_layout.py load instantly.
@@ -6223,9 +6264,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       // Perf mode: build the instanced scene (after bloom so passes see it) and
       // wire custom picking (graphData is empty — built-in raycast is blind).
       if (perfMode) {
+        const hadBake = hasBakedLayout(nodes) && !_usedFallbackLayout;
         buildPerfScene(nodes, edges);
         initPerfPicking();
-        if (PERF_SIM) perfRunLiveSim(nodes, edges); // fire-and-forget, bounded
+        // dynamic "esférica": relax coord-less graphs with real physics
+        const wantSim = PERF_SIM_PARAM === '1' || (PERF_SIM_PARAM !== '0' && !hadBake);
+        if (wantSim) perfRunLiveSim(nodes, edges); // fire-and-forget, bounded
       }
       // If the galaxy theme is active, dress the fresh scene again (teardown
       // removed the previous starfield with the old scene).
