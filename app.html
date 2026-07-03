@@ -6562,20 +6562,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let _arrangeIdx = -1;
     function goGalaxy() {
       if (currentTheme !== 'galaxy') applyTheme('galaxy');
-      // relax (GPU physics settle) only exists on the perf path
-      const cycle = (perfMode && perf) ? ['spiral', 'relax']
-                                       : ['spiral', 'original'];
+      // G alternates the two baked arrangements. The GPU relax (esférico)
+      // stays opt-in via ?sim=1 — cycling into live physics from the button
+      // collapsed million-node layouts into a blob mid-view.
+      const cycle = ['spiral', 'original'];
       _arrangeIdx = (_arrangeIdx + 1) % cycle.length;
       const mode = cycle[_arrangeIdx];
-      if (mode === 'relax') {
-        if (_galaxyAnimRAF) { cancelAnimationFrame(_galaxyAnimRAF); _galaxyAnimRAF = null; }
-        if (gpuSim) { _simAborted = true; gpuSim.dispose(); gpuSim = null; }
-        perfRunLiveSim(perf.nodes || [], perf.edges || []);
-        setBootStage('ARRANGE // ESFÉRICO', 'física GPU (Barnes-Hut) hasta asentar');
-      } else {
-        galaxyArrange(mode);
-        setBootStage(`ARRANGE // ${ARRANGE_LABEL[mode]}`, 'G alterna: espiral ↔ esférico');
-      }
+      galaxyArrange(mode);
+      setBootStage(`ARRANGE // ${ARRANGE_LABEL[mode]}`, 'G alterna: espiral ↔ original');
       setTimeout(hideBootStatus, 1800);
       const btn = document.getElementById('galaxy-btn');
       if (btn) btn.textContent = `✦ ${ARRANGE_LABEL[mode]}`;
