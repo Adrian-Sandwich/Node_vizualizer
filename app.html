@@ -4758,6 +4758,8 @@ struct SimParams {
   positionStrength: f32,
   damping: f32,
   dt: f32,
+  gridOrigin: vec3f,
+  cellSize: f32,
 };`;
 
     const TILE_SIZE = 256;
@@ -4881,44 +4883,242 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   velocities[i] = vec4f(vel, 0.0);
 }`;
 
+    // ═══ Grid Barnes-Hut charge (FMM-lite monopole) ════════════════════════
+    // O(N) replacement for the O(N²) tiled charge above; used for large
+    // graphs. Uniform 64³ grid + mip pyramid (64→32→16→8→4). Per node:
+    // exact-ish 3³ near field at the finest level (own-cell self-subtraction)
+    // plus the classic FMM interaction list per level — children of the
+    // parent's 27 neighbors excluding the node's own 27 (≤189 cells/level,
+    // no double counting). Level-0 binning sums positions RELATIVE to the
+    // cell center in i32 fixed point (scale 2048): worst case 2M nodes ×
+    // 0.5 × 2048 ≈ 2.0e9 < 2³¹ — deterministic (integer atomics commute).
+    const BH_GRID_DIM = 64;
+    const BH_LEVELS = 5; // dims 64,32,16,8,4
+    const BH_L_OFF = [0, 262144, 294912, 299008, 299520]; // cell offsets per level
+    const BH_TOTAL_CELLS = 299584;
+    const BH_FP_SCALE = 2048.0;
+
+    const WGSL_BH_COMMON = `
+const L_OFF = array<u32, 5>(0u, 262144u, 294912u, 299008u, 299520u);
+fn cellIndex(g: vec3i, dim: u32) -> u32 {
+  return (u32(g.z) * dim + u32(g.y)) * dim + u32(g.x);
+}
+`;
+
+    const WGSL_BH_BIN = WGSL_PARAMS_STRUCT + `
+@group(0) @binding(0) var<storage, read> positions: array<vec4f>;
+@group(0) @binding(1) var<storage, read_write> grid: array<atomic<i32>>;
+@group(0) @binding(2) var<uniform> params: SimParams;
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= params.nodeCount) { return; }
+  let p = positions[i].xyz;
+  let g = clamp(vec3i(floor((p - params.gridOrigin) / params.cellSize)),
+                vec3i(0), vec3i(63));
+  let center = params.gridOrigin + (vec3f(g) + 0.5) * params.cellSize;
+  let rel = clamp((p - center) / params.cellSize, vec3f(-0.5), vec3f(0.5));
+  let fi = vec3i(rel * ${BH_FP_SCALE});
+  let c = (u32(g.z) * 64u + u32(g.y)) * 64u + u32(g.x);
+  atomicAdd(&grid[c * 4u + 0u], fi.x);
+  atomicAdd(&grid[c * 4u + 1u], fi.y);
+  atomicAdd(&grid[c * 4u + 2u], fi.z);
+  atomicAdd(&grid[c * 4u + 3u], 1);
+}`;
+
+    const WGSL_BH_RESOLVE = WGSL_PARAMS_STRUCT + `
+@group(0) @binding(0) var<storage, read> grid: array<i32>;
+@group(0) @binding(1) var<storage, read_write> pyr: array<vec4f>;
+@group(0) @binding(2) var<uniform> params: SimParams;
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let c = gid.x;
+  if (c >= 262144u) { return; }
+  let cnt = grid[c * 4u + 3u];
+  if (cnt == 0) { pyr[c] = vec4f(0.0); return; }
+  let gz = c / 4096u;
+  let gy = (c / 64u) % 64u;
+  let gx = c % 64u;
+  let center = params.gridOrigin + (vec3f(f32(gx), f32(gy), f32(gz)) + 0.5) * params.cellSize;
+  let sum = vec3f(f32(grid[c * 4u]), f32(grid[c * 4u + 1u]), f32(grid[c * 4u + 2u]));
+  let centroid = center + (sum / (${BH_FP_SCALE} * f32(cnt))) * params.cellSize;
+  pyr[c] = vec4f(centroid, f32(cnt));
+}`;
+
+    // one pipeline per mip level, SRC_DIM/SRC_OFF/DST_OFF baked
+    function wgslBhMip(srcDim, srcOff, dstOff) {
+      const dstDim = srcDim / 2;
+      return `
+@group(0) @binding(0) var<storage, read_write> pyr: array<vec4f>;
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let c = gid.x;
+  let dstCells = ${dstDim * dstDim * dstDim}u;
+  if (c >= dstCells) { return; }
+  let dz = c / ${dstDim * dstDim}u;
+  let dy = (c / ${dstDim}u) % ${dstDim}u;
+  let dx = c % ${dstDim}u;
+  var m = 0.0;
+  var wsum = vec3f(0.0);
+  for (var k = 0u; k < 8u; k++) {
+    let sx = dx * 2u + (k & 1u);
+    let sy = dy * 2u + ((k >> 1u) & 1u);
+    let sz = dz * 2u + ((k >> 2u) & 1u);
+    let cell = pyr[${srcOff}u + (sz * ${srcDim}u + sy) * ${srcDim}u + sx];
+    wsum += cell.xyz * cell.w;
+    m += cell.w;
+  }
+  if (m > 0.5) {
+    pyr[${dstOff}u + c] = vec4f(wsum / m, m);
+  } else {
+    pyr[${dstOff}u + c] = vec4f(0.0);
+  }
+}`;
+    }
+
+    const WGSL_BH_CHARGE = WGSL_PARAMS_STRUCT + WGSL_BH_COMMON + `
+@group(0) @binding(0) var<storage, read> positions: array<vec4f>;
+@group(0) @binding(1) var<storage, read_write> velocities: array<vec4f>;
+@group(0) @binding(2) var<storage, read> pyr: array<vec4f>;
+@group(0) @binding(3) var<uniform> params: SimParams;
+
+fn hash3(i: u32) -> vec3f {
+  var h = i * 747796405u + 2891336453u;
+  h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
+  let a = f32(h & 1023u) / 1023.0;
+  let b = f32((h >> 10u) & 1023u) / 1023.0;
+  let c = f32((h >> 20u) & 1023u) / 1023.0;
+  return normalize(vec3f(a - 0.5, b - 0.5, c - 0.5) + vec3f(1e-4));
+}
+
+fn repulse(p: vec3f, cell: vec4f, eps2: f32, k: f32) -> vec3f {
+  if (cell.w < 0.5) { return vec3f(0.0); }
+  let diff = p - cell.xyz;
+  let d2 = dot(diff, diff) + 0.01 + eps2;
+  return diff * inverseSqrt(d2) * (cell.w * k / d2);
+}
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (i >= params.nodeCount) { return; }
+  let p = positions[i].xyz;
+  let k = -params.chargeStrength; // negative strength convention = repulsion
+  var g = clamp(vec3i(floor((p - params.gridOrigin) / params.cellSize)),
+                vec3i(0), vec3i(63));
+  var force = vec3f(0.0);
+  // cell-scale softening: a resolution floor for dense cores — intra-cell
+  // micro-forces are chaotic and the monopole can't resolve them anyway
+  let eps2 = 0.0625 * params.cellSize * params.cellSize;
+
+  // near field: 3³ at the finest level, own cell self-subtracted
+  for (var dz = -1; dz <= 1; dz++) {
+  for (var dy = -1; dy <= 1; dy++) {
+  for (var dx = -1; dx <= 1; dx++) {
+    let ng = g + vec3i(dx, dy, dz);
+    if (any(ng < vec3i(0)) || any(ng > vec3i(63))) { continue; }
+    let cell = pyr[cellIndex(ng, 64u)];
+    if (dx == 0 && dy == 0 && dz == 0) {
+      let m = cell.w;
+      if (m > 1.5) {
+        var c2 = (cell.xyz * m - p) / (m - 1.0);
+        var diff = p - c2;
+        if (dot(diff, diff) < 1e-4) {
+          // coincident pile (baked layouts round coords): synthetic escape
+          diff = hash3(i) * 0.5;
+          c2 = p - diff;
+        }
+        force += repulse(p, vec4f(c2, m - 1.0), eps2, k);
+      }
+    } else {
+      force += repulse(p, cell, eps2, k);
+    }
+  }}}
+
+  // far field: interaction lists — children of the parent's 27 neighborhood
+  // minus the own 27, per level (exact tiling, no double counting)
+  var c = g;
+  var dim = 64;
+  for (var L = 0u; L < 5u; L++) {
+    let pdim = dim / 2;
+    let P = vec3i(c.x >> 1, c.y >> 1, c.z >> 1);
+    for (var pz = P.z - 1; pz <= P.z + 1; pz++) {
+    for (var py = P.y - 1; py <= P.y + 1; py++) {
+    for (var px = P.x - 1; px <= P.x + 1; px++) {
+      if (px < 0 || py < 0 || pz < 0 || px >= pdim || py >= pdim || pz >= pdim) { continue; }
+      for (var k8 = 0u; k8 < 8u; k8++) {
+        let ch = vec3i(px * 2 + i32(k8 & 1u),
+                       py * 2 + i32((k8 >> 1u) & 1u),
+                       pz * 2 + i32((k8 >> 2u) & 1u));
+        let dd = ch - c;
+        if (max(abs(dd.x), max(abs(dd.y), abs(dd.z))) <= 1) { continue; }
+        force += repulse(p, pyr[L_OFF[L] + cellIndex(ch, u32(dim))], 0.0, k);
+      }
+    }}}
+    c = P;
+    dim = pdim;
+  }
+  velocities[i] = vec4f(velocities[i].xyz + force * params.dt, 0.0);
+}`;
+
     class GPUForceSimulation {
-      constructor(device, nodes, edges, layoutKey, scale) {
+      constructor(device, nodes, edges, layoutKey, scale, opts) {
         this.device = device;
-        this.nodes = nodes;
-        this.nodeCount = nodes.length;
-        this.edgeCount = edges.length;
+        const arraysMode = !!(nodes && nodes.arraysMode);
+        this.nodes = arraysMode ? null : nodes;
+        this.nodeCount = arraysMode ? nodes.count : nodes.length;
+        this.edgeCount = arraysMode ? nodes.edgeSrc.length : edges.length;
         this.scale = scale;
         this.positions = new Float32Array(this.nodeCount * 3);
         this._disposed = false;
 
-        // Initialize positions from nodes
-        nodes.forEach((n, i) => {
-          this.positions[i * 3] = n.x || 0;
-          this.positions[i * 3 + 1] = n.y || 0;
-          this.positions[i * 3 + 2] = n.z || 0;
-        });
-
-        // Build edge index array
-        const nodeIdToIdx = new Map();
-        nodes.forEach((n, i) => nodeIdToIdx.set(n.id, i));
-        const edgeIndices = new Uint32Array(Math.max(edges.length * 2, 2));
-        edges.forEach((e, i) => {
-          const src = typeof e.source === 'object' ? e.source.id : e.source;
-          const tgt = typeof e.target === 'object' ? e.target.id : e.target;
-          edgeIndices[i * 2] = nodeIdToIdx.get(src) || 0;
-          edgeIndices[i * 2 + 1] = nodeIdToIdx.get(tgt) || 0;
-        });
+        // Initialize positions + edge indices (object mode or typed arrays)
+        const edgeIndices = new Uint32Array(Math.max(this.edgeCount * 2, 2));
+        if (arraysMode) {
+          this.positions.set(nodes.positions.subarray(0, this.nodeCount * 3));
+          for (let i = 0; i < this.edgeCount; i++) {
+            edgeIndices[i * 2] = Math.max(0, nodes.edgeSrc[i]);
+            edgeIndices[i * 2 + 1] = Math.max(0, nodes.edgeDst[i]);
+          }
+        } else {
+          nodes.forEach((n, i) => {
+            this.positions[i * 3] = n.x || 0;
+            this.positions[i * 3 + 1] = n.y || 0;
+            this.positions[i * 3 + 2] = n.z || 0;
+          });
+          const nodeIdToIdx = new Map();
+          nodes.forEach((n, i) => nodeIdToIdx.set(n.id, i));
+          edges.forEach((e, i) => {
+            const src = typeof e.source === 'object' ? e.source.id : e.source;
+            const tgt = typeof e.target === 'object' ? e.target.id : e.target;
+            edgeIndices[i * 2] = nodeIdToIdx.get(src) || 0;
+            edgeIndices[i * 2 + 1] = nodeIdToIdx.get(tgt) || 0;
+          });
+        }
 
         // Create GPU buffers (vec4f = 16 bytes per element)
         const posData = new Float32Array(this.nodeCount * 4);
-        nodes.forEach((n, i) => {
-          posData[i * 4] = n.x || 0;
-          posData[i * 4 + 1] = n.y || 0;
-          posData[i * 4 + 2] = n.z || 0;
-        });
+        for (let i = 0; i < this.nodeCount; i++) {
+          posData[i * 4] = this.positions[i * 3];
+          posData[i * 4 + 1] = this.positions[i * 3 + 1];
+          posData[i * 4 + 2] = this.positions[i * 3 + 2];
+        }
+
+        if (this.nodeCount >= 2000000) {
+          // BIN fixed-point budget: 2M × 0.5 × 2048 ≈ 2.0e9 → i32 limit
+          throw new Error('GPUForceSimulation: máximo 2M nodos (presupuesto fixed-point del grid)');
+        }
+        this.useGridCharge = opts && ('forceGrid' in opts)
+          ? !!opts.forceGrid
+          : this.nodeCount > 50000;
+        this.gridOrigin = [-4200, -4200, -4200];
+        this.cellSize = 8400 / 64;
 
         this.posBuffer = this._createStorageBuffer(posData, true);
-        this.velBuffer = this._createStorageBuffer(new Float32Array(this.nodeCount * 4), false);
+        this.velBuffer = this._createStorageBuffer(new Float32Array(this.nodeCount * 4), true); // COPY_SRC: readVelocities (verification)
         this.targetBuffer = this._createStorageBuffer(new Float32Array(this.nodeCount * 4), false, true);
         this.edgeBuffer = this._createStorageBufferU32(edgeIndices);
 
@@ -4943,7 +5143,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           dt: 0.02,
         };
         this.paramsBuffer = device.createBuffer({
-          size: 32,
+          size: 48,
           usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
         this._writeParams();
@@ -4954,8 +5154,21 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
         });
 
+        if (this.useGridCharge) {
+          // 64³ atomic bin grid (4×i32/cell ≈ 4.2MB) + vec4f mip pyramid
+          // (64³+32³+16³+8³+4³ cells ≈ 4.8MB)
+          this.gridAtomicBuffer = device.createBuffer({
+            size: 262144 * 4 * 4,
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+          });
+          this.pyramidBuffer = device.createBuffer({
+            size: 299584 * 16,
+            usage: GPUBufferUsage.STORAGE,
+          });
+        }
+
         this._createPipelines();
-        this.setTargets(layoutKey);
+        if (this.nodes) this.setTargets(layoutKey); // arrays mode: targets stay at zeros (centering)
       }
 
       _createStorageBuffer(data, copySrc = false, copyDst = false) {
@@ -4984,13 +5197,15 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       }
 
       _writeParams() {
-        const ab = new ArrayBuffer(32);
-        new Uint32Array(ab, 0, 2).set([this.params.nodeCount, this.params.edgeCount]);
+        const ab = new ArrayBuffer(48);
+        new Uint32Array(ab, 0, 2).set([this.nodeCount, this.edgeCount]);
         new Float32Array(ab, 8, 6).set([
           this.params.chargeStrength, this.params.linkStrength,
           this.params.linkDistance, this.params.positionStrength,
           this.params.damping, this.params.dt,
         ]);
+        new Float32Array(ab, 32, 3).set(this.gridOrigin);
+        new Float32Array(ab, 44, 1)[0] = this.cellSize;
         this.device.queue.writeBuffer(this.paramsBuffer, 0, ab);
       }
 
@@ -5002,6 +5217,17 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         };
 
         this.chargePipeline = makePipeline(WGSL_CHARGE);
+        if (this.useGridCharge) {
+          this.bhBinPipeline = makePipeline(WGSL_BH_BIN);
+          this.bhResolvePipeline = makePipeline(WGSL_BH_RESOLVE);
+          this.bhMipPipelines = [
+            makePipeline(wgslBhMip(64, BH_L_OFF[0], BH_L_OFF[1])),
+            makePipeline(wgslBhMip(32, BH_L_OFF[1], BH_L_OFF[2])),
+            makePipeline(wgslBhMip(16, BH_L_OFF[2], BH_L_OFF[3])),
+            makePipeline(wgslBhMip(8,  BH_L_OFF[3], BH_L_OFF[4])),
+          ];
+          this.bhChargePipeline = makePipeline(WGSL_BH_CHARGE);
+        }
         this.linkScatterPipeline = makePipeline(WGSL_LINK_SCATTER);
         this.linkGatherPipeline = makePipeline(WGSL_LINK_GATHER);
         this.posPipeline = makePipeline(WGSL_POSITION);
@@ -5054,6 +5280,52 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
             { binding: 2, resource: { buffer: this.paramsBuffer } },
           ],
         });
+
+        if (this.useGridCharge) {
+          this.bhBinBindGroup = dev.createBindGroup({
+            layout: this.bhBinPipeline.getBindGroupLayout(0),
+            entries: [
+              { binding: 0, resource: { buffer: this.posBuffer } },
+              { binding: 1, resource: { buffer: this.gridAtomicBuffer } },
+              { binding: 2, resource: { buffer: this.paramsBuffer } },
+            ],
+          });
+          this.bhResolveBindGroup = dev.createBindGroup({
+            layout: this.bhResolvePipeline.getBindGroupLayout(0),
+            entries: [
+              { binding: 0, resource: { buffer: this.gridAtomicBuffer } },
+              { binding: 1, resource: { buffer: this.pyramidBuffer } },
+              { binding: 2, resource: { buffer: this.paramsBuffer } },
+            ],
+          });
+          this.bhMipBindGroups = this.bhMipPipelines.map(pl => dev.createBindGroup({
+            layout: pl.getBindGroupLayout(0),
+            entries: [{ binding: 0, resource: { buffer: this.pyramidBuffer } }],
+          }));
+          this.bhChargeBindGroup = dev.createBindGroup({
+            layout: this.bhChargePipeline.getBindGroupLayout(0),
+            entries: [
+              { binding: 0, resource: { buffer: this.posBuffer } },
+              { binding: 1, resource: { buffer: this.velBuffer } },
+              { binding: 2, resource: { buffer: this.pyramidBuffer } },
+              { binding: 3, resource: { buffer: this.paramsBuffer } },
+            ],
+          });
+        }
+      }
+
+      async readVelocities() { // debug/verification only
+        const tmp = this.device.createBuffer({
+          size: this.nodeCount * 16,
+          usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+        });
+        const enc = this.device.createCommandEncoder();
+        enc.copyBufferToBuffer(this.velBuffer, 0, tmp, 0, this.nodeCount * 16);
+        this.device.queue.submit([enc.finish()]);
+        await tmp.mapAsync(GPUMapMode.READ);
+        const v = new Float32Array(tmp.getMappedRange()).slice();
+        tmp.unmap(); tmp.destroy();
+        return v; // vec4 stride
       }
 
       setTargets(layoutKey) {
@@ -5074,16 +5346,44 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       }
       setPositionStrength(s) { this.params.positionStrength = s; this._writeParams(); }
 
-      async tick() {
+      async tick(skipReadback = false) {
         if (this._disposed) return;
         const wg = Math.ceil(this.nodeCount / 256);
         const encoder = this.device.createCommandEncoder();
 
-        const chargePass = encoder.beginComputePass();
-        chargePass.setPipeline(this.chargePipeline);
-        chargePass.setBindGroup(0, this.chargeBindGroup);
-        chargePass.dispatchWorkgroups(wg);
-        chargePass.end();
+        if (this.useGridCharge) {
+          // grid Barnes-Hut: clear → bin → resolve → mips → far-field force
+          encoder.clearBuffer(this.gridAtomicBuffer);
+          const bin = encoder.beginComputePass();
+          bin.setPipeline(this.bhBinPipeline);
+          bin.setBindGroup(0, this.bhBinBindGroup);
+          bin.dispatchWorkgroups(wg);
+          bin.end();
+          const res = encoder.beginComputePass();
+          res.setPipeline(this.bhResolvePipeline);
+          res.setBindGroup(0, this.bhResolveBindGroup);
+          res.dispatchWorkgroups(1024); // 64³ / 256
+          res.end();
+          const mipWg = [512, 64, 8, 1]; // (dstDim³)/64 per level
+          for (let L = 0; L < 4; L++) {
+            const mp = encoder.beginComputePass();
+            mp.setPipeline(this.bhMipPipelines[L]);
+            mp.setBindGroup(0, this.bhMipBindGroups[L]);
+            mp.dispatchWorkgroups(mipWg[L]);
+            mp.end();
+          }
+          const fc = encoder.beginComputePass();
+          fc.setPipeline(this.bhChargePipeline);
+          fc.setBindGroup(0, this.bhChargeBindGroup);
+          fc.dispatchWorkgroups(wg);
+          fc.end();
+        } else {
+          const chargePass = encoder.beginComputePass();
+          chargePass.setPipeline(this.chargePipeline);
+          chargePass.setBindGroup(0, this.chargeBindGroup);
+          chargePass.dispatchWorkgroups(wg);
+          chargePass.end();
+        }
 
         // Link force: scatter per-edge, then gather per-node
         const linkScatter = encoder.beginComputePass();
@@ -5110,15 +5410,43 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         intPass.dispatchWorkgroups(wg);
         intPass.end();
 
+        if (skipReadback) {
+          // strobe mode: run physics without the 16MB/tick readback + JS copy
+          this.device.queue.submit([encoder.finish()]);
+          await this.device.queue.onSubmittedWorkDone();
+          return;
+        }
         encoder.copyBufferToBuffer(this.posBuffer, 0, this.readBuffer, 0, this.nodeCount * 4 * 4);
         this.device.queue.submit([encoder.finish()]);
 
         await this.readBuffer.mapAsync(GPUMapMode.READ);
         const data = new Float32Array(this.readBuffer.getMappedRange());
+        let mn = Infinity, mx = -Infinity; // bbox fused into the copy (free)
         for (let i = 0; i < this.nodeCount; i++) {
-          this.positions[i * 3] = data[i * 4];
-          this.positions[i * 3 + 1] = data[i * 4 + 1];
-          this.positions[i * 3 + 2] = data[i * 4 + 2];
+          const x = data[i * 4], y = data[i * 4 + 1], z = data[i * 4 + 2];
+          this.positions[i * 3] = x;
+          this.positions[i * 3 + 1] = y;
+          this.positions[i * 3 + 2] = z;
+          const lo = Math.min(x, Math.min(y, z));
+          const hi = Math.max(x, Math.max(y, z));
+          if (lo < mn) mn = lo;
+          if (hi > mx) mx = hi;
+        }
+        if (this.useGridCharge && Number.isFinite(mn) && Number.isFinite(mx)) {
+          // refit the grid cube with hysteresis: only when the layout escapes
+          // it or shrinks well below it (per-tick jitter would perturb forces)
+          const curSide = this.cellSize * 64;
+          const curLo = this.gridOrigin[0];
+          const needSide = Math.max(100, (mx - mn) * 1.1);
+          const escaped = mn < curLo || mx > curLo + curSide;
+          const tooBig = needSide < curSide * 0.6;
+          if (escaped || tooBig) {
+            const c = (mn + mx) / 2;
+            const half = needSide / 2;
+            this.gridOrigin = [c - half, c - half, c - half];
+            this.cellSize = needSide / 64;
+            this._writeParams();
+          }
         }
         this.readBuffer.unmap();
       }
@@ -5131,6 +5459,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         this.edgeBuffer.destroy();
         this.forceAccumBuffer.destroy();
         this.paramsBuffer.destroy();
+        if (this.gridAtomicBuffer) this.gridAtomicBuffer.destroy();
+        if (this.pyramidBuffer) this.pyramidBuffer.destroy();
         this.readBuffer.destroy();
       }
     }
@@ -5172,6 +5502,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // auto-relax; ?sim=1 forces it even for baked layouts. Needs WebGPU
     // (Chrome); silently skipped elsewhere.
     const PERF_SIM_PARAM = new URLSearchParams(location.search).get('sim');
+    // ?bh=1|0 forces the grid Barnes-Hut charge on/off (default: auto >50k)
+    const PERF_BH_PARAM = new URLSearchParams(location.search).get('bh');
 
     function hasBakedLayout(nodes) {
       if (!nodes.length) return false;
@@ -6239,6 +6571,71 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     }
 
     let _simAborted = false;
+    // Verification protocol (design step a): one charge-isolated tick on the
+    // SAME initial state through the exact O(N²) kernel and the grid
+    // Barnes-Hut, compare velocity directions/magnitudes. ?bhtest=1 runs it
+    // on the loaded graph and logs the stats.
+    async function bhABTest() {
+      if (!perf) { console.warn('[bhtest] no perf scene'); return; }
+      if (!('gpu' in navigator)) { console.warn('[bhtest] no WebGPU'); return; }
+      const adapter = await navigator.gpu.requestAdapter();
+      const device = await adapter.requestDevice();
+      const arrays = { arraysMode: true, count: perf.count,
+                       positions: perf.positions,
+                       edgeSrc: perf.edgeSrc, edgeDst: perf.edgeDst };
+      const mk = (forceGrid) => {
+        const sim = new GPUForceSimulation(device, arrays, null, currentLayout, SCALE, { forceGrid });
+        sim.params.linkStrength = 0;       // isolate charge
+        sim.params.positionStrength = 0;
+        sim.params.chargeStrength = -8;
+        sim._writeParams();
+        return sim;
+      };
+      const exact = mk(false);
+      const grid = mk(true);
+      await exact.tick();
+      await grid.tick();
+      const ve = await exact.readVelocities();
+      const vg = await grid.readVelocities();
+      let n = perf.count, used = 0;
+      // magnitude stats first (weighted metrics need the scale of real forces)
+      let sumMe = 0;
+      for (let i = 0; i < n; i++) {
+        sumMe += Math.hypot(ve[i * 4], ve[i * 4 + 1], ve[i * 4 + 2]);
+      }
+      const meanMe = sumMe / n;
+      const cosines = [], ratios = [], relErrs = [];
+      const cosinesW = []; // only nodes with meaningful net force (>25% mean)
+      for (let i = 0; i < n; i++) {
+        const ex = ve[i * 4], ey = ve[i * 4 + 1], ez = ve[i * 4 + 2];
+        const gx = vg[i * 4], gy = vg[i * 4 + 1], gz = vg[i * 4 + 2];
+        const me = Math.hypot(ex, ey, ez), mg = Math.hypot(gx, gy, gz);
+        relErrs.push(Math.hypot(gx - ex, gy - ey, gz - ez) / (meanMe || 1));
+        if (me < 1e-9 || mg < 1e-9) continue;
+        used++;
+        const c = (ex * gx + ey * gy + ez * gz) / (me * mg);
+        cosines.push(c);
+        ratios.push(mg / me);
+        if (me > meanMe * 0.25) cosinesW.push(c);
+      }
+      cosines.sort((a, b) => a - b);
+      cosinesW.sort((a, b) => a - b);
+      ratios.sort((a, b) => a - b);
+      relErrs.sort((a, b) => a - b);
+      const q = (arr, f) => arr[Math.floor(arr.length * f)];
+      const stats = {
+        nodes: n, compared: used, meaningful: cosinesW.length,
+        cos_p05: q(cosines, 0.05)?.toFixed(4),
+        cosW_p05: q(cosinesW, 0.05)?.toFixed(4),
+        cosW_p50: q(cosinesW, 0.5)?.toFixed(4),
+        ratio_p50: q(ratios, 0.5)?.toFixed(3),
+        relErr_p95: q(relErrs, 0.95)?.toFixed(3),
+      };
+      console.log('[bhtest]', JSON.stringify(stats));
+      exact.dispose(); grid.dispose();
+      return stats;
+    }
+
     // EXPERIMENTAL (?sim=1): live GPU relax of the perf-mode layout. Acquires
     // its own WebGPU device (the global gpuAvailable stays false — it gates
     // unrelated dormant paths), runs the existing GPUForceSimulation for a
@@ -6254,7 +6651,16 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       } catch (e) { console.warn('[perfSim] no WebGPU device:', e); return; }
       if (!perf) return; // graph got torn down while we awaited
       _simAborted = false;
-      gpuSim = new GPUForceSimulation(device, nodes, edges, currentLayout, SCALE);
+      // feed the sim straight from the perf typed arrays — same source for
+      // JSON and kbin modes, no per-node objects
+      const simInput = { arraysMode: true, count: perf.count,
+                         positions: perf.positions,
+                         edgeSrc: perf.edgeSrc, edgeDst: perf.edgeDst };
+      const simOpts = PERF_BH_PARAM === '1' ? { forceGrid: true }
+                    : PERF_BH_PARAM === '0' ? { forceGrid: false }
+                    : undefined; // auto: grid above 50k nodes
+      gpuSim = new GPUForceSimulation(device, simInput, null, currentLayout, SCALE, simOpts);
+      log(`[perfSim] charge=${gpuSim.useGridCharge ? 'grid-BH' : 'exact O(N²)'} n=${perf.count}`);
       // The target buffer stays at ZEROS on purpose: with a WEAK strength it
       // acts as a d3-style centering force (drift/explosion guard) that is
       // shape-neutral — anchoring to the spiral seed left ghost arms in the
@@ -6287,9 +6693,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           }
           return;
         }
-        gpuSim.tick().then(() => {
+        const strobe = perf.count > 200000 ? 3 : 1; // readback+visuals every Nth tick
+        gpuSim.tick(strobe > 1 && (ticks + 1) % strobe !== 0).then(() => {
           if (!gpuSim || !perf) return;
           ticks++;
+          if (strobe > 1 && ticks % strobe !== 0) {
+            requestAnimationFrame(loop);
+            return;
+          }
           perf.positions.set(gpuSim.positions.subarray(0, perf.positions.length));
           if (DEBUG && (ticks === 1 || ticks % 60 === 0)) {
             let bad = 0, r2max = 0;
@@ -6672,15 +7083,17 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         }
         initPerfPicking();
         // dynamic "esférica": relax coord-less graphs with real physics.
-        // kbin mode: gated off until the Barnes-Hut charge lands (F3) — the
-        // O(N²) kernel would take minutes per tick at 1M+ nodes.
+        // kbin graphs carry a baked layout so auto-relax stays off; ?sim=1
+        // opts in (grid Barnes-Hut kicks in automatically above 50k nodes).
         const wantSim = PERF_SIM_PARAM === '1' || (PERF_SIM_PARAM !== '0' && !hadBake);
-        if (wantSim && !perfData) perfRunLiveSim(nodes, edges); // fire-and-forget, bounded
-        else if (wantSim && perfData) log('[perfSim] kbin: relax deshabilitado hasta Barnes-Hut (F3)');
+        if (wantSim) perfRunLiveSim(nodes, edges); // fire-and-forget, bounded
       }
       // If the galaxy theme is active, dress the fresh scene again (teardown
       // removed the previous starfield with the old scene).
       if (currentTheme === 'galaxy') ensureStarfield();
+      if (perfMode && perf && new URLSearchParams(location.search).get('bhtest') === '1') {
+        setTimeout(() => bhABTest(), 800);
+      }
       // ?galaxy=1 — open straight into the Celestial Dynamics galaxy view
       if (new URLSearchParams(location.search).get('galaxy') === '1') setTimeout(goGalaxy, 400);
 
