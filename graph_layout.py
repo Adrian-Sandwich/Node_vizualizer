@@ -234,6 +234,77 @@ def layout_igraph(nodes, edges, algo, seed):
     return [tuple(c) for c in lay.coords]
 
 
+def split_islands(nodes, edges):
+    """Connected components (union-find over node indices), biggest first."""
+    n = len(nodes)
+    idx = {node["id"]: i for i, node in enumerate(nodes)}
+    parent = list(range(n))
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for e in edges:
+        a, b = idx.get(e["from"]), idx.get(e["to"])
+        if a is None or b is None:
+            continue
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+    comps = defaultdict(list)
+    for i in range(n):
+        comps[find(i)].append(i)
+    return sorted(comps.values(), key=len, reverse=True)
+
+
+def layout_islands(nodes, edges, radius, algo_fn, islands):
+    """Disconnected graphs: lay out each island independently, then place
+    islands on a ring (y=0). One shared layout smears all medoids onto the
+    origin and the islands print on top of each other."""
+    n = len(nodes)
+    total = float(n)
+    big = [c for c in islands if len(c) >= max(10, total * 0.01)]
+    crumbs = [i for c in islands if c not in big for i in c]
+    node_set = [None] * n
+    for ci, comp in enumerate(big):
+        for i in comp:
+            node_set[i] = ci
+
+    coords = [None] * n
+    ring_r = radius * 1.15
+    for ci, comp in enumerate(big):
+        members = set(comp)
+        sub_nodes = [nodes[i] for i in comp]
+        sub_edges = [e for e in edges
+                     if node_set_idx(nodes, e, members)]
+        island_r = max(radius * 0.18, radius * math.sqrt(len(comp) / total) * 0.75)
+        sub = normalize(algo_fn(sub_nodes, sub_edges, island_r), island_r)
+        ang = 2.0 * math.pi * ci / len(big)
+        cx, cz = ring_r * math.cos(ang), ring_r * math.sin(ang)
+        for i, (x, y, z) in zip(comp, sub):
+            coords[i] = (cx + x, y, cz + z)
+
+    # crumbs (isolated nodes / tiny fragments): sparse outer halo
+    if crumbs:
+        halo = fibonacci_sphere(len(crumbs), radius * 1.9)
+        for i, (px, py, pz) in zip(crumbs, halo):
+            coords[i] = (px, py * 0.3, pz)
+    return coords
+
+
+def node_set_idx(nodes, e, members):
+    """True when both endpoints of e sit inside the member index set."""
+    idx = getattr(node_set_idx, "_idx", None)
+    if idx is None or node_set_idx._nodes is not nodes:
+        idx = {node["id"]: i for i, node in enumerate(nodes)}
+        node_set_idx._idx = idx
+        node_set_idx._nodes = nodes
+    a, b = idx.get(e["from"]), idx.get(e["to"])
+    return a in members and b in members
+
+
 def normalize(coords, radius):
     """Center on the centroid, scale so the 95th-percentile radius == radius."""
     n = len(coords)
@@ -273,14 +344,18 @@ def main():
 
     print(f"[graph_layout] {len(nodes)} nodes / {len(edges)} edges, algo={algo}",
           file=sys.stderr)
-    if algo == "sphere":
-        coords = layout_sphere(nodes, edges, args.radius)
-    elif algo == "spiral":
-        coords = layout_spiral(nodes, edges, args.radius)
-    elif algo == "radial":
-        coords = layout_radial(nodes, edges, args.radius)
+    algo_fn = {"sphere": layout_sphere, "spiral": layout_spiral,
+               "radial": layout_radial}.get(
+        algo, lambda ns, es, r: layout_igraph(ns, es, algo, args.seed))
+
+    islands = split_islands(nodes, edges)
+    n_big = sum(1 for c in islands if len(c) >= max(10, len(nodes) * 0.01))
+    if n_big >= 2:
+        print(f"[graph_layout] {len(islands)} componentes ({n_big} grandes) — "
+              f"layout por isla + anillo", file=sys.stderr)
+        coords = layout_islands(nodes, edges, args.radius, algo_fn, islands)
     else:
-        coords = layout_igraph(nodes, edges, algo, args.seed)
+        coords = algo_fn(nodes, edges, args.radius)
 
     coords = normalize(coords, args.radius)
     for n, (x, y, z) in zip(nodes, coords):
