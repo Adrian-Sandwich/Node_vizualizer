@@ -4741,6 +4741,7 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
         if (gpuSim) { _simAborted = true; gpuSim.dispose(); gpuSim = null; }
         if (perf.lines) perf.lines.visible = true;
         galaxyArrange('original');
+        _currentView = 'original';
         setBootStage('ARRANGE // BAKE DEL ARCHIVO', 'layout horneado original');
         setTimeout(hideBootStatus, 1800);
       } else if (key === 'b' && Graph) {
@@ -6646,14 +6647,16 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // G / GALAXY button: first press enters the galaxy view (theme + spiral),
     // each further press cycles the arrangement.
     const ARRANGE_LABEL = { spiral: 'SPIRAL', original: 'ORIGINAL', sphere: 'ESFÉRICO', relax: 'ESFÉRICO' };
-    let _arrangeIdx = -1;
+    let _currentView = 'sphere'; // sphere-on-open; O -> original, G toggles
     function goGalaxy() {
       if (currentTheme !== 'galaxy') applyTheme('galaxy');
-      // G alternates espiral <-> esfera. The settled sphere is cached, so
-      // toggling back animates instantly instead of re-running the physics.
-      const cycle = (perfMode && perf) ? ['spiral', 'sphere'] : ['spiral', 'original'];
-      _arrangeIdx = (_arrangeIdx + 1) % cycle.length;
-      const mode = cycle[_arrangeIdx];
+      // G toggles by the CURRENT view, not a blind counter — after O (bake)
+      // or a slider re-relax the counter desynced and G needed two presses
+      // to come back to the sphere.
+      const mode = (perfMode && perf)
+        ? (_currentView === 'sphere' ? 'spiral' : 'sphere')
+        : (_currentView === 'spiral' ? 'original' : 'spiral');
+      _currentView = mode;
       if (mode === 'sphere' && !(perf && perf.spherePositions)) {
         if (_galaxyAnimRAF) { cancelAnimationFrame(_galaxyAnimRAF); _galaxyAnimRAF = null; }
         if (gpuSim) { _simAborted = true; gpuSim.dispose(); gpuSim = null; }
@@ -6755,6 +6758,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       } catch (e) { console.warn('[perfSim] no WebGPU device:', e); return; }
       if (!perf) return; // graph got torn down while we awaited
       _simAborted = false;
+      _currentView = 'sphere';
       // sphere-on-open: settle from a compact random seed. Starting from a
       // baked layout just keeps its shape — a bake is already near
       // equilibrium, so the "sphere" never forms. (O restores the bake.)
@@ -6896,7 +6900,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       if (_labelRAF) { cancelAnimationFrame(_labelRAF); _labelRAF = null; }
       if (clusterLabelRAF) { cancelAnimationFrame(clusterLabelRAF); clusterLabelRAF = null; }
       if (_galaxyAnimRAF) { cancelAnimationFrame(_galaxyAnimRAF); _galaxyAnimRAF = null; }
-      _arrangeIdx = -1; // fresh graph → next G starts at spiral
+      _currentView = 'sphere'; // fresh graph opens as the physics sphere
       const _gbtn = document.getElementById('galaxy-btn');
       if (_gbtn) _gbtn.textContent = '✦ GALAXY';
       removeStarfield();  // belongs to the old scene
