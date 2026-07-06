@@ -4696,6 +4696,14 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       } else if (key === 'g' && Graph) {
         // G: Celestial Dynamics galaxy view (theme + concentric re-arrange)
         goGalaxy();
+      } else if (key === 'o' && Graph && perfMode && perf) {
+        // O: back to the file's baked layout (semantic bakes survive the
+        // sphere-on-open default)
+        if (gpuSim) { _simAborted = true; gpuSim.dispose(); gpuSim = null; }
+        if (perf.lines) perf.lines.visible = true;
+        galaxyArrange('original');
+        setBootStage('ARRANGE // BAKE DEL ARCHIVO', 'layout horneado original');
+        setTimeout(hideBootStatus, 1800);
       } else if (key === 'b' && Graph) {
         // B: fondo blanco ↔ espacial (light keeps the file's own palette)
         toggleFondo();
@@ -6413,6 +6421,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         const target = new Float32Array(n * 3);
         if (mode === 'original') {
           target.set(perf.origPositions);
+        } else if (mode === 'sphere' && perf.spherePositions) {
+          target.set(perf.spherePositions);
         } else if (perf.nodes && mode !== 'spiral') {
           if (mode === 'sphere') computeFallbackLayout(perf.nodes, perf.edges);
           perf.nodes.forEach((nd, i) => {
@@ -6559,18 +6569,24 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     // G / GALAXY button: first press enters the galaxy view (theme + spiral),
     // each further press cycles the arrangement.
-    const ARRANGE_LABEL = { spiral: 'SPIRAL', original: 'ORIGINAL', relax: 'ESFÉRICO' };
+    const ARRANGE_LABEL = { spiral: 'SPIRAL', original: 'ORIGINAL', sphere: 'ESFÉRICO', relax: 'ESFÉRICO' };
     let _arrangeIdx = -1;
     function goGalaxy() {
       if (currentTheme !== 'galaxy') applyTheme('galaxy');
-      // G alternates the two baked arrangements. The GPU relax (esférico)
-      // stays opt-in via ?sim=1 — cycling into live physics from the button
-      // collapsed million-node layouts into a blob mid-view.
-      const cycle = ['spiral', 'original'];
+      // G alternates espiral <-> esfera. The settled sphere is cached, so
+      // toggling back animates instantly instead of re-running the physics.
+      const cycle = (perfMode && perf) ? ['spiral', 'sphere'] : ['spiral', 'original'];
       _arrangeIdx = (_arrangeIdx + 1) % cycle.length;
       const mode = cycle[_arrangeIdx];
-      galaxyArrange(mode);
-      setBootStage(`ARRANGE // ${ARRANGE_LABEL[mode]}`, 'G alterna: espiral ↔ original');
+      if (mode === 'sphere' && !(perf && perf.spherePositions)) {
+        if (_galaxyAnimRAF) { cancelAnimationFrame(_galaxyAnimRAF); _galaxyAnimRAF = null; }
+        if (gpuSim) { _simAborted = true; gpuSim.dispose(); gpuSim = null; }
+        perfRunLiveSim(perf.nodes || [], perf.edges || []);
+        setBootStage('ARRANGE // ESFÉRICO', 'física GPU (Barnes-Hut) hasta asentar');
+      } else {
+        galaxyArrange(mode);
+        setBootStage(`ARRANGE // ${ARRANGE_LABEL[mode]}`, 'G alterna: espiral ↔ esfera · O: bake del archivo');
+      }
       setTimeout(hideBootStatus, 1800);
       const btn = document.getElementById('galaxy-btn');
       if (btn) btn.textContent = `✦ ${ARRANGE_LABEL[mode]}`;
@@ -6662,6 +6678,21 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       } catch (e) { console.warn('[perfSim] no WebGPU device:', e); return; }
       if (!perf) return; // graph got torn down while we awaited
       _simAborted = false;
+      // sphere-on-open: settle from a compact random seed. Starting from a
+      // baked layout just keeps its shape — a bake is already near
+      // equilibrium, so the "sphere" never forms. (O restores the bake.)
+      {
+        const R0 = SCALE * 2;
+        let rng = 123456789; // deterministic LCG — same sphere every open
+        const rnd = () => (rng = (rng * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+        for (let i = 0; i < perf.count; i++) {
+          const u = rnd() * 2 - 1, th = rnd() * Math.PI * 2, rr = R0 * Math.cbrt(rnd());
+          const sxy = Math.sqrt(1 - u * u);
+          perf.positions[i * 3] = rr * sxy * Math.cos(th);
+          perf.positions[i * 3 + 1] = rr * u;
+          perf.positions[i * 3 + 2] = rr * sxy * Math.sin(th);
+        }
+      }
       // feed the sim straight from the perf typed arrays — same source for
       // JSON and kbin modes, no per-node objects
       const simInput = { arraysMode: true, count: perf.count,
@@ -6697,9 +6728,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           if (perf && perf.lines) perf.lines.visible = true;
           if (_simAborted) { _simAborted = false; return; } // user took control
           if (perf) {
-            // the settled arrangement becomes the graph's ORIGINAL (G cycles
-            // back to it) and the camera reframes to its final shape
-            perf.origPositions.set(perf.positions);
+            // cache the settled sphere (G toggles back without re-simulating);
+            // origPositions keeps the file's bake for the O key
+            perf.spherePositions = perf.positions.slice();
             if (perf.nodes) perf.nodes.forEach((nd, i) => {
               nd.x = perf.positions[i * 3];
               nd.y = perf.positions[i * 3 + 1];
@@ -7104,10 +7135,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           buildPerfScene(nodes, edges);
         }
         initPerfPicking();
-        // dynamic "esférica": relax coord-less graphs with real physics.
-        // kbin graphs carry a baked layout so auto-relax stays off; ?sim=1
-        // opts in (grid Barnes-Hut kicks in automatically above 50k nodes).
-        const wantSim = PERF_SIM_PARAM === '1' || (PERF_SIM_PARAM !== '0' && !hadBake);
+        // every graph opens as the physics sphere (organic settle, grid
+        // Barnes-Hut above 50k nodes). ?sim=0 opts out -> baked view.
+        const wantSim = PERF_SIM_PARAM !== '0';
         if (wantSim) perfRunLiveSim(nodes, edges); // fire-and-forget, bounded
       }
       // If the galaxy theme is active, dress the fresh scene again (teardown
