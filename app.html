@@ -1192,6 +1192,28 @@
       color: var(--text);
       border-color: var(--blue);
     }
+    #tune-panel {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+      display: flex;
+      gap: 18px;
+      align-items: center;
+      background: var(--bg-panel);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid var(--border);
+      padding: 8px 16px;
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+    #tune-panel label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+    #tune-panel input[type=range] { width: 110px; accent-color: #8a7bff; }
 
   </style>
 </head>
@@ -1389,6 +1411,14 @@
     <!-- Config Panel: bottom-right -->
     <button id="galaxy-btn" title="Celestial Dynamics — vista galaxia (G)">✦ GALAXY</button>
     <button id="bg-toggle" title="Fondo blanco ↔ espacial (B)">◐ FONDO</button>
+    <div id="tune-panel">
+      <label title="Tamaño de nodo (encima del auto-ajuste por densidad)">Densidad
+        <input id="density-slider" type="range" min="-0.6" max="0.6" step="0.02" value="0">
+      </label>
+      <label title="Gravedad del relax esférico — al soltar re-asienta con el nuevo valor">Gravedad
+        <input id="gravity-slider" type="range" min="-1" max="1.3" step="0.05" value="0">
+      </label>
+    </div>
 
   </div><!-- /main -->
 
@@ -6113,7 +6143,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       rs.sort();
       const r50 = rs[k >> 1] || 1;
       const meanBase = (sumBase / k) || 1;
-      const TARGET_FILL = 0.02;
+      const TARGET_FILL = 0.03;
       const sStar = r50 * Math.sqrt(TARGET_FILL / Math.max(1, n / 2));
       AUTO_SIZE_MULT = Math.min(3, Math.max(0.1, sStar / meanBase));
       // edges are the other half of the haze: fade line opacity with edge
@@ -6639,6 +6669,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     }
 
     let _simAborted = false;
+    let SIM_GRAVITY = 0.001; // slider: centering strength of the relax
     // harness/debug hook: closure state is unreachable from the console
     window.NVZ_DEBUG = {
       get perf() { return perf; }, get Graph() { return Graph; },
@@ -6715,7 +6746,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // bounded number of ticks streaming positions into the instanced buffers,
     // then disposes. Uses the module-level gpuSim var so initGraph teardown
     // kills it on reload.
-    async function perfRunLiveSim(nodes, edges) {
+    async function perfRunLiveSim(nodes, edges, opts = {}) {
       if (!('gpu' in navigator)) { setBootStage('WEBGPU NOT AVAILABLE', 'live sim skipped'); return; }
       let device;
       try {
@@ -6727,7 +6758,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       // sphere-on-open: settle from a compact random seed. Starting from a
       // baked layout just keeps its shape — a bake is already near
       // equilibrium, so the "sphere" never forms. (O restores the bake.)
-      {
+      if (opts.reseed !== false) {
         const R0 = SCALE * 2;
         let rng = 123456789; // deterministic LCG — same sphere every open
         const rnd = () => (rng = (rng * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
@@ -6756,7 +6787,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       // at 0.012 charge repulsion equilibrates far from the origin.)
       // loose gravity: strong centering packed the sphere into an unreadable
       // core — weaker pull + stronger charge + longer springs = airy ball
-      gpuSim.params.positionStrength = 0.001;
+      gpuSim.params.positionStrength = SIM_GRAVITY;
       gpuSim.setChargeStrength(-35);
       gpuSim.setLinkStrength(0.006, 200); // also flushes positionStrength via _writeParams
       const m4 = new THREE.Matrix4();
@@ -7016,7 +7047,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
             const manual = EDGE_DENSITY_STEPS[_edgeDensityIdx];
             // edge BUDGET, not fraction: ~30k segments zoomed out, ~120k in
             // close — a fixed % of 300k+ edges is solid fog at any opacity
-            const budgetF = Math.min(1, 60000 / Math.max(1, perf.uploadCount));
+            const budgetF = Math.min(1, 80000 / Math.max(1, perf.uploadCount));
             const f = Math.min(manual, zoomF * budgetF);
             const want = Math.floor(perf.uploadCount * f) * 2;
             if (Math.abs((perf._lastDraw || 0) - want) > perf.uploadCount * 0.1) {
@@ -7613,6 +7644,27 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     // Toggle color theme
     document.getElementById('galaxy-btn').addEventListener('click', () => goGalaxy());
+    // tune sliders: log-mapped density (node size over auto) + relax gravity
+    {
+      const dsl = document.getElementById('density-slider');
+      const gsl = document.getElementById('gravity-slider');
+      let raf = 0;
+      dsl?.addEventListener('input', () => {
+        USER_SIZE_MULT = Math.pow(10, parseFloat(dsl.value));
+        if (!raf) raf = requestAnimationFrame(() => { raf = 0; if (perf) perfApplyHighlight(); });
+      });
+      gsl?.addEventListener('input', () => {
+        SIM_GRAVITY = 0.001 * Math.pow(10, parseFloat(gsl.value));
+        if (gpuSim && !gpuSim._disposed) {
+          gpuSim.params.positionStrength = SIM_GRAVITY;
+          gpuSim._writeParams(); // live while the sim runs
+        }
+      });
+      gsl?.addEventListener('change', () => {
+        // settled: re-relax from the current shape with the new gravity
+        if (!gpuSim && perfMode && perf) perfRunLiveSim(perf.nodes || [], perf.edges || [], { reseed: false });
+      });
+    }
     document.getElementById('bg-toggle').addEventListener('click', () => toggleFondo());
 
     // (label-toggle and config panel removed from release build)
