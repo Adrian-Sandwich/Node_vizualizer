@@ -6708,9 +6708,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       // shape-neutral — anchoring to the spiral seed left ghost arms in the
       // settled result. (The old collapse bug was the DEFAULT 0.18 strength;
       // at 0.012 charge repulsion equilibrates far from the origin.)
-      gpuSim.params.positionStrength = 0.012;
-      gpuSim.setChargeStrength(-8);
-      gpuSim.setLinkStrength(0.02, 60); // also flushes positionStrength via _writeParams
+      // loose gravity: strong centering packed the sphere into an unreadable
+      // core — weaker pull + stronger charge + longer springs = airy ball
+      gpuSim.params.positionStrength = 0.002;
+      gpuSim.setChargeStrength(-20);
+      gpuSim.setLinkStrength(0.01, 120); // also flushes positionStrength via _writeParams
       const m4 = new THREE.Matrix4();
       // points-only physics view: mid-settle stretched edges white out the
       // whole screen, so the line object hides until the layout settles
