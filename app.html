@@ -4940,14 +4940,15 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // no double counting). Level-0 binning sums positions RELATIVE to the
     // cell center in i32 fixed point (scale 2048): worst case 2M nodes ×
     // 0.5 × 2048 ≈ 2.0e9 < 2³¹ — deterministic (integer atomics commute).
-    const BH_GRID_DIM = 64;
-    const BH_LEVELS = 5; // dims 64,32,16,8,4
-    const BH_L_OFF = [0, 262144, 294912, 299008, 299520]; // cell offsets per level
-    const BH_TOTAL_CELLS = 299584;
+    const BH_GRID_DIM = 128; // 64³ under-resolved 1M-node cores: thousands of
+    // nodes/cell + cell-scale eps2 softening let springs win → clumping
+    const BH_LEVELS = 6; // dims 128,64,32,16,8,4
+    const BH_L_OFF = [0, 2097152, 2359296, 2392064, 2396160, 2396672];
+    const BH_TOTAL_CELLS = 2396736;
     const BH_FP_SCALE = 2048.0;
 
     const WGSL_BH_COMMON = `
-const L_OFF = array<u32, 5>(0u, 262144u, 294912u, 299008u, 299520u);
+const L_OFF = array<u32, 6>(0u, 2097152u, 2359296u, 2392064u, 2396160u, 2396672u);
 fn cellIndex(g: vec3i, dim: u32) -> u32 {
   return (u32(g.z) * dim + u32(g.y)) * dim + u32(g.x);
 }
@@ -4964,11 +4965,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   if (i >= params.nodeCount) { return; }
   let p = positions[i].xyz;
   let g = clamp(vec3i(floor((p - params.gridOrigin) / params.cellSize)),
-                vec3i(0), vec3i(63));
+                vec3i(0), vec3i(127));
   let center = params.gridOrigin + (vec3f(g) + 0.5) * params.cellSize;
   let rel = clamp((p - center) / params.cellSize, vec3f(-0.5), vec3f(0.5));
   let fi = vec3i(rel * ${BH_FP_SCALE});
-  let c = (u32(g.z) * 64u + u32(g.y)) * 64u + u32(g.x);
+  let c = (u32(g.z) * 128u + u32(g.y)) * 128u + u32(g.x);
   atomicAdd(&grid[c * 4u + 0u], fi.x);
   atomicAdd(&grid[c * 4u + 1u], fi.y);
   atomicAdd(&grid[c * 4u + 2u], fi.z);
@@ -4983,12 +4984,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let c = gid.x;
-  if (c >= 262144u) { return; }
+  if (c >= 2097152u) { return; }
   let cnt = grid[c * 4u + 3u];
   if (cnt == 0) { pyr[c] = vec4f(0.0); return; }
-  let gz = c / 4096u;
-  let gy = (c / 64u) % 64u;
-  let gx = c % 64u;
+  let gz = c / 16384u;
+  let gy = (c / 128u) % 128u;
+  let gx = c % 128u;
   let center = params.gridOrigin + (vec3f(f32(gx), f32(gy), f32(gz)) + 0.5) * params.cellSize;
   let sum = vec3f(f32(grid[c * 4u]), f32(grid[c * 4u + 1u]), f32(grid[c * 4u + 2u]));
   let centroid = center + (sum / (${BH_FP_SCALE} * f32(cnt))) * params.cellSize;
@@ -5056,7 +5057,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let p = positions[i].xyz;
   let k = -params.chargeStrength; // negative strength convention = repulsion
   var g = clamp(vec3i(floor((p - params.gridOrigin) / params.cellSize)),
-                vec3i(0), vec3i(63));
+                vec3i(0), vec3i(127));
   var force = vec3f(0.0);
   // cell-scale softening: a resolution floor for dense cores — intra-cell
   // micro-forces are chaotic and the monopole can't resolve them anyway
@@ -5067,8 +5068,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   for (var dy = -1; dy <= 1; dy++) {
   for (var dx = -1; dx <= 1; dx++) {
     let ng = g + vec3i(dx, dy, dz);
-    if (any(ng < vec3i(0)) || any(ng > vec3i(63))) { continue; }
-    let cell = pyr[cellIndex(ng, 64u)];
+    if (any(ng < vec3i(0)) || any(ng > vec3i(127))) { continue; }
+    let cell = pyr[cellIndex(ng, 128u)];
     if (dx == 0 && dy == 0 && dz == 0) {
       let m = cell.w;
       if (m > 1.5) {
@@ -5089,8 +5090,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   // far field: interaction lists — children of the parent's 27 neighborhood
   // minus the own 27, per level (exact tiling, no double counting)
   var c = g;
-  var dim = 64;
-  for (var L = 0u; L < 5u; L++) {
+  var dim = 128;
+  for (var L = 0u; L < 6u; L++) {
     let pdim = dim / 2;
     let P = vec3i(c.x >> 1, c.y >> 1, c.z >> 1);
     for (var pz = P.z - 1; pz <= P.z + 1; pz++) {
@@ -5163,7 +5164,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           ? !!opts.forceGrid
           : this.nodeCount > 50000;
         this.gridOrigin = [-4200, -4200, -4200];
-        this.cellSize = 8400 / 64;
+        this.cellSize = 8400 / BH_GRID_DIM;
 
         this.posBuffer = this._createStorageBuffer(posData, true);
         this.velBuffer = this._createStorageBuffer(new Float32Array(this.nodeCount * 4), true); // COPY_SRC: readVelocities (verification)
@@ -5203,14 +5204,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         });
 
         if (this.useGridCharge) {
-          // 64³ atomic bin grid (4×i32/cell ≈ 4.2MB) + vec4f mip pyramid
-          // (64³+32³+16³+8³+4³ cells ≈ 4.8MB)
+          // 128³ atomic bin grid (4×i32/cell ≈ 33.6MB) + vec4f mip pyramid
+          // (128³+64³+32³+16³+8³+4³ cells ≈ 38.3MB)
           this.gridAtomicBuffer = device.createBuffer({
-            size: 262144 * 4 * 4,
+            size: BH_GRID_DIM ** 3 * 4 * 4,
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           });
           this.pyramidBuffer = device.createBuffer({
-            size: 299584 * 16,
+            size: BH_TOTAL_CELLS * 16,
             usage: GPUBufferUsage.STORAGE,
           });
         }
@@ -5269,10 +5270,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           this.bhBinPipeline = makePipeline(WGSL_BH_BIN);
           this.bhResolvePipeline = makePipeline(WGSL_BH_RESOLVE);
           this.bhMipPipelines = [
-            makePipeline(wgslBhMip(64, BH_L_OFF[0], BH_L_OFF[1])),
-            makePipeline(wgslBhMip(32, BH_L_OFF[1], BH_L_OFF[2])),
-            makePipeline(wgslBhMip(16, BH_L_OFF[2], BH_L_OFF[3])),
-            makePipeline(wgslBhMip(8,  BH_L_OFF[3], BH_L_OFF[4])),
+            makePipeline(wgslBhMip(128, BH_L_OFF[0], BH_L_OFF[1])),
+            makePipeline(wgslBhMip(64,  BH_L_OFF[1], BH_L_OFF[2])),
+            makePipeline(wgslBhMip(32,  BH_L_OFF[2], BH_L_OFF[3])),
+            makePipeline(wgslBhMip(16,  BH_L_OFF[3], BH_L_OFF[4])),
+            makePipeline(wgslBhMip(8,   BH_L_OFF[4], BH_L_OFF[5])),
           ];
           this.bhChargePipeline = makePipeline(WGSL_BH_CHARGE);
         }
@@ -5410,10 +5412,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           const res = encoder.beginComputePass();
           res.setPipeline(this.bhResolvePipeline);
           res.setBindGroup(0, this.bhResolveBindGroup);
-          res.dispatchWorkgroups(1024); // 64³ / 256
+          res.dispatchWorkgroups(8192); // 128³ / 256
           res.end();
-          const mipWg = [512, 64, 8, 1]; // (dstDim³)/64 per level
-          for (let L = 0; L < 4; L++) {
+          const mipWg = [4096, 512, 64, 8, 1]; // (dstDim³)/64 per level
+          for (let L = 0; L < 5; L++) {
             const mp = encoder.beginComputePass();
             mp.setPipeline(this.bhMipPipelines[L]);
             mp.setBindGroup(0, this.bhMipBindGroups[L]);
@@ -5483,7 +5485,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         if (this.useGridCharge && Number.isFinite(mn) && Number.isFinite(mx)) {
           // refit the grid cube with hysteresis: only when the layout escapes
           // it or shrinks well below it (per-tick jitter would perturb forces)
-          const curSide = this.cellSize * 64;
+          const curSide = this.cellSize * BH_GRID_DIM;
           const curLo = this.gridOrigin[0];
           const needSide = Math.max(100, (mx - mn) * 1.1);
           const escaped = mn < curLo || mx > curLo + curSide;
@@ -5492,7 +5494,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
             const c = (mn + mx) / 2;
             const half = needSide / 2;
             this.gridOrigin = [c - half, c - half, c - half];
-            this.cellSize = needSide / 64;
+            this.cellSize = needSide / BH_GRID_DIM;
             this._writeParams();
           }
         }
@@ -6213,7 +6215,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       for (let i = 0; i < e; i++) {
         const si = perf.edgeSrc[i], ti = perf.edgeDst[i];
         if (si < 0 || ti < 0) continue;
-        const hidden = !nodeVisible[si] || !nodeVisible[ti];
+        let hidden = !nodeVisible[si] || !nodeVisible[ti];
+        if (!hidden && perf._edgeLenCap) {
+          const dx = p[si * 3] - p[ti * 3], dy = p[si * 3 + 1] - p[ti * 3 + 1],
+                dz = p[si * 3 + 2] - p[ti * 3 + 2];
+          hidden = dx * dx + dy * dy + dz * dz > perf._edgeLenCap * perf._edgeLenCap;
+        }
         if (hidden) {
           // both vertices to the same point → zero-length segment
           for (let k = 0; k < 3; k++) {
@@ -6564,6 +6571,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           if (t < 1) { _galaxyAnimRAF = requestAnimationFrame(step); }
           else {
             _galaxyAnimRAF = null;
+            perf._edgeLenCap = 0; // cull only applies to the sphere view
             perfAutoNodeSize(); perfApplyHighlight();
             // JSON mode keeps the rich records' coords in sync (kbin records
             // are materialized fresh from perf.positions — nothing to sync)
@@ -6763,7 +6771,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       // baked layout just keeps its shape — a bake is already near
       // equilibrium, so the "sphere" never forms. (O restores the bake.)
       if (opts.reseed !== false) {
-        const R0 = SCALE * 2;
+        // seed AT the charge/gravity equilibrium radius (r³ ~ k·N/g): a
+        // compact seed explodes outward, the bbox refit inflates the BH cell
+        // size ~15×, and whole communities collapse below grid resolution —
+        // the result is a stable urchin of radial needles, not a sphere
+        const kSeed = 35 * Math.min(1, Math.max(0.06, 80000 / perf.count));
+        const R0 = Math.max(SCALE * 2,
+          0.6 * Math.cbrt(kSeed * perf.count / Math.max(1e-5, SIM_GRAVITY)));
         let rng = 123456789; // deterministic LCG — same sphere every open
         const rnd = () => (rng = (rng * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
         for (let i = 0; i < perf.count; i++) {
@@ -6790,9 +6804,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       // settled result. (The old collapse bug was the DEFAULT 0.18 strength;
       // at 0.012 charge repulsion equilibrates far from the origin.)
       // loose gravity: strong centering packed the sphere into an unreadable
-      // core — weaker pull + stronger charge + longer springs = airy ball
+      // core — weaker pull + stronger charge + longer springs = airy ball.
+      // Charge scales DOWN past ~80k nodes: at 1M+, a -35 ambient field blows
+      // degree-1 leaves into radial comet tails (stable urchin of needles)
+      const chargeK = -35 * Math.min(1, Math.max(0.06, 80000 / perf.count));
       gpuSim.params.positionStrength = SIM_GRAVITY;
-      gpuSim.setChargeStrength(-35);
+      gpuSim.setChargeStrength(chargeK);
       gpuSim.setLinkStrength(0.006, 200); // also flushes positionStrength via _writeParams
       const m4 = new THREE.Matrix4();
       // points-only physics view: mid-settle stretched edges white out the
@@ -6800,9 +6817,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       if (perf.lines) perf.lines.visible = false;
       // adaptive settle budget: small graphs afford more refinement ticks
       const simEdges = (edges && edges.length) || perf.edgeCount || 1;
-      // floor 300: million-node graphs need the ticks (BH + strobe keeps
-      // per-tick cost flat); ceiling 600 still bounds small-graph refinement
-      const MAX_TICKS = Math.round(Math.min(600, Math.max(300, 30e6 / simEdges)));
+      // ticks scale with node count: from a compact seed a 1M-node cloud is
+      // still mid-explosion at 300 ticks (spiky urchin) — it needs ~600-900
+      // to decelerate and settle back into the ball
+      const MAX_TICKS = Math.round(Math.min(900,
+        Math.max(300, perf.count / 1500, 30e6 / simEdges)));
       let ticks = 0;
       setBootStage('LIVE GPU SIM…', 'relaxing layout');
       const loop = () => {
@@ -6811,6 +6830,67 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           if (perf && perf.lines) perf.lines.visible = true;
           if (_simAborted) { _simAborted = false; return; } // user took control
           if (perf) {
+            // normalize the settled scale: at 1M+ nodes charge equilibrium
+            // lands at r95 ~ 57k world units — past the camera's usable
+            // range. Screen density is scale-invariant, so rescale to a
+            // canonical radius instead of chasing camera clamps.
+            {
+              const pn = perf.positions, cnt = perf.count;
+              const stp = Math.max(1, Math.floor(cnt / 20000));
+              const rs = [];
+              for (let i = 0; i < cnt; i += stp) {
+                const x = pn[i * 3], y = pn[i * 3 + 1], z = pn[i * 3 + 2];
+                rs.push(Math.sqrt(x * x + y * y + z * z));
+              }
+              rs.sort((a, b) => a - b);
+              const r95 = rs[(rs.length * 0.95) | 0] || 1;
+              // soft-clamp outliers: a handful of nodes (<0.1%) settle at
+              // 4-7x the cloud radius and their edge fans render as a
+              // radial urchin over an otherwise clean ball
+              const rCap = r95 * 1.6;
+              for (let i = 0; i < cnt; i++) {
+                const x = pn[i * 3], y = pn[i * 3 + 1], z = pn[i * 3 + 2];
+                const r = Math.sqrt(x * x + y * y + z * z);
+                if (r > rCap) {
+                  const f2 = (rCap + (r - rCap) * 0.08) / r;
+                  pn[i * 3] = x * f2; pn[i * 3 + 1] = y * f2; pn[i * 3 + 2] = z * f2;
+                }
+              }
+              const TARGET_R = SCALE * 6;
+              {
+                const f = (r95 > TARGET_R * 1.5 || r95 < TARGET_R * 0.5) ? TARGET_R / r95 : 1;
+                if (f !== 1) for (let k = 0; k < cnt * 3; k++) pn[k] *= f;
+                if (perf.points) perf.pointsGeo.getAttribute('position').needsUpdate = true;
+                // sphere view culls pathological spans: <1% of edges stretch
+                // to outlier hubs and paint the whole view as an urchin
+                const capLen = TARGET_R * 1.5;
+                perf._edgeLenCap = capLen;
+                const cap2 = capLen * capLen;
+                for (let i = 0; i < perf.uploadCount; i++) {
+                  const si = perf.edgeSrc[i], ti = perf.edgeDst[i];
+                  if (si < 0 || ti < 0) continue;
+                  const ddx = pn[si * 3] - pn[ti * 3],
+                        ddy = pn[si * 3 + 1] - pn[ti * 3 + 1],
+                        ddz = pn[si * 3 + 2] - pn[ti * 3 + 2];
+                  const tooLong = ddx * ddx + ddy * ddy + ddz * ddz > cap2;
+                  for (let k = 0; k < 3; k++) {
+                    perf.linePos[i * 6 + k] = pn[si * 3 + k];
+                    perf.linePos[i * 6 + 3 + k] = pn[(tooLong ? si : ti) * 3 + k];
+                  }
+                }
+                perf.lineGeo.getAttribute('position').needsUpdate = true;
+                if (!perf.points) {
+                  const mm = new THREE.Matrix4();
+                  for (let i = 0; i < cnt; i++) {
+                    const sc = perf.scales[i] || 0.0001;
+                    mm.makeScale(sc, sc, sc).setPosition(pn[i * 3], pn[i * 3 + 1], pn[i * 3 + 2]);
+                    perf.mesh.setMatrixAt(i, mm);
+                  }
+                  perf.mesh.instanceMatrix.needsUpdate = true;
+                }
+                perf._boundR = 0;
+              }
+            }
             // cache the settled sphere (G toggles back without re-simulating);
             // origPositions keeps the file's bake for the O key
             perf.spherePositions = perf.positions.slice();
