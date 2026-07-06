@@ -4696,6 +4696,14 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       } else if (key === 'g' && Graph) {
         // G: Celestial Dynamics galaxy view (theme + concentric re-arrange)
         goGalaxy();
+      } else if ((key === '-' || key === '+' || key === '=') && perfMode && perf) {
+        // +/-: node size — the honest density lever; more settle volume just
+        // makes the camera pull back (screen density is scale-invariant)
+        NODE_SIZE_MULT = Math.min(5, Math.max(0.15,
+          NODE_SIZE_MULT * (key === '-' ? 0.75 : 1.33)));
+        perfApplyHighlight();
+        setBootStage(`NODOS // ${Math.round(NODE_SIZE_MULT * 100)}%`, '+/- ajusta tamaño');
+        setTimeout(hideBootStatus, 1200);
       } else if (key === 'o' && Graph && perfMode && perf) {
         // O: back to the file's baked layout (semantic bakes survive the
         // sphere-on-open default)
@@ -6080,6 +6088,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       return mask;
     }
 
+    let NODE_SIZE_MULT = 1; // +/- keys: visual density control at any scale
     function perfApplyHighlight() {
       if (!perf) return;
       const selIdx = selectedNode
@@ -6099,7 +6108,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       for (let i = 0; i < perf.count; i++) {
         const hidden = hiddenTags.has(String(perf.clusterIdx[i]));
         nodeVisible[i] = hidden ? 0 : 1;
-        const baseS = perf.baseScale[i];
+        const baseS = perf.baseScale[i] * NODE_SIZE_MULT;
         const dimmed = mask && i !== selIdx && !mask[i];
         // scale: 0 hides; dimmed nodes shrink (perf.scales feeds picking and
         // hover-restore, so keep the visual scale there)
@@ -6710,9 +6719,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       // at 0.012 charge repulsion equilibrates far from the origin.)
       // loose gravity: strong centering packed the sphere into an unreadable
       // core — weaker pull + stronger charge + longer springs = airy ball
-      gpuSim.params.positionStrength = 0.002;
-      gpuSim.setChargeStrength(-20);
-      gpuSim.setLinkStrength(0.01, 120); // also flushes positionStrength via _writeParams
+      gpuSim.params.positionStrength = 0.001;
+      gpuSim.setChargeStrength(-35);
+      gpuSim.setLinkStrength(0.006, 200); // also flushes positionStrength via _writeParams
       const m4 = new THREE.Matrix4();
       // points-only physics view: mid-settle stretched edges white out the
       // whole screen, so the line object hides until the layout settles
