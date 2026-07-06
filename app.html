@@ -4699,10 +4699,11 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
       } else if ((key === '-' || key === '+' || key === '=') && perfMode && perf) {
         // +/-: node size — the honest density lever; more settle volume just
         // makes the camera pull back (screen density is scale-invariant)
-        NODE_SIZE_MULT = Math.min(5, Math.max(0.15,
-          NODE_SIZE_MULT * (key === '-' ? 0.75 : 1.33)));
+        USER_SIZE_MULT = Math.min(5, Math.max(0.15,
+          USER_SIZE_MULT * (key === '-' ? 0.75 : 1.33)));
         perfApplyHighlight();
-        setBootStage(`NODOS // ${Math.round(NODE_SIZE_MULT * 100)}%`, '+/- ajusta tamaño');
+        setBootStage(`NODOS // ${Math.round(AUTO_SIZE_MULT * USER_SIZE_MULT * 100)}%`,
+                     'auto-densidad × ajuste manual (+/-)');
         setTimeout(hideBootStatus, 1200);
       } else if (key === 'o' && Graph && perfMode && perf) {
         // O: back to the file's baked layout (semantic bakes survive the
@@ -6088,7 +6089,42 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       return mask;
     }
 
-    let NODE_SIZE_MULT = 1; // +/- keys: visual density control at any scale
+    let AUTO_SIZE_MULT = 1;  // computed from node density per volume
+    let USER_SIZE_MULT = 1;  // +/- keys: fine-tune on top of auto
+    // dynamic node sizing: measure the cloud's median radius and size nodes
+    // so the core (half the nodes inside r50) covers ~TARGET_FILL of its
+    // projected disc. Recomputed on every arrangement — any graph, any scale.
+    function perfAutoNodeSize() {
+      if (!perf || !perf.count) return;
+      const n = perf.count, step = Math.max(1, Math.floor(n / 20000));
+      const pos = perf.positions;
+      let cx = 0, cy = 0, cz = 0, m = 0;
+      for (let i = 0; i < n; i += step) {
+        cx += pos[i * 3]; cy += pos[i * 3 + 1]; cz += pos[i * 3 + 2]; m++;
+      }
+      cx /= m; cy /= m; cz /= m;
+      const rs = new Float32Array(m);
+      let sumBase = 0, k = 0;
+      for (let i = 0; i < n; i += step) {
+        const dx = pos[i * 3] - cx, dy = pos[i * 3 + 1] - cy, dz = pos[i * 3 + 2] - cz;
+        rs[k] = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        sumBase += perf.baseScale[i]; k++;
+      }
+      rs.sort();
+      const r50 = rs[k >> 1] || 1;
+      const meanBase = (sumBase / k) || 1;
+      const TARGET_FILL = 0.02;
+      const sStar = r50 * Math.sqrt(TARGET_FILL / Math.max(1, n / 2));
+      AUTO_SIZE_MULT = Math.min(3, Math.max(0.1, sStar / meanBase));
+      // edges are the other half of the haze: fade line opacity with edge
+      // count so 300k translucent segments don't paint a solid fog
+      if (perf.lineMat) {
+        if (perf._baseLineOpacity === undefined) perf._baseLineOpacity = perf.lineMat.opacity;
+        perf.lineMat.opacity = Math.min(perf._baseLineOpacity,
+          Math.max(0.03, 12000 / Math.max(1, perf.uploadCount)));
+        perf.lineMat.needsUpdate = true;
+      }
+    }
     function perfApplyHighlight() {
       if (!perf) return;
       const selIdx = selectedNode
@@ -6108,7 +6144,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       for (let i = 0; i < perf.count; i++) {
         const hidden = hiddenTags.has(String(perf.clusterIdx[i]));
         nodeVisible[i] = hidden ? 0 : 1;
-        const baseS = perf.baseScale[i] * NODE_SIZE_MULT;
+        const baseS = perf.baseScale[i] * AUTO_SIZE_MULT * USER_SIZE_MULT;
         const dimmed = mask && i !== selIdx && !mask[i];
         // scale: 0 hides; dimmed nodes shrink (perf.scales feeds picking and
         // hover-restore, so keep the visual scale there)
@@ -6497,6 +6533,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           if (t < 1) { _galaxyAnimRAF = requestAnimationFrame(step); }
           else {
             _galaxyAnimRAF = null;
+            perfAutoNodeSize(); perfApplyHighlight();
             // JSON mode keeps the rich records' coords in sync (kbin records
             // are materialized fresh from perf.positions — nothing to sync)
             if (perf.nodes) perf.nodes.forEach((nd, i) => {
@@ -6742,6 +6779,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
             // cache the settled sphere (G toggles back without re-simulating);
             // origPositions keeps the file's bake for the O key
             perf.spherePositions = perf.positions.slice();
+            perfAutoNodeSize(); perfApplyHighlight();
             if (perf.nodes) perf.nodes.forEach((nd, i) => {
               nd.x = perf.positions[i * 3];
               nd.y = perf.positions[i * 3 + 1];
@@ -6976,7 +7014,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
             const R = perf._boundR || (perf._boundR = perfBoundingRadius());
             const zoomF = Math.max(0.25, Math.min(1, 1.6 - (camD / (R * 2.2))));
             const manual = EDGE_DENSITY_STEPS[_edgeDensityIdx];
-            const f = Math.min(manual, zoomF);
+            // edge BUDGET, not fraction: ~30k segments zoomed out, ~120k in
+            // close — a fixed % of 300k+ edges is solid fog at any opacity
+            const budgetF = Math.min(1, 60000 / Math.max(1, perf.uploadCount));
+            const f = Math.min(manual, zoomF * budgetF);
             const want = Math.floor(perf.uploadCount * f) * 2;
             if (Math.abs((perf._lastDraw || 0) - want) > perf.uploadCount * 0.1) {
               perf._lastDraw = want;
@@ -7148,6 +7189,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         initPerfPicking();
         // every graph opens as the physics sphere (organic settle, grid
         // Barnes-Hut above 50k nodes). ?sim=0 opts out -> baked view.
+        perfAutoNodeSize(); perfApplyHighlight(); // density-fit the baked view
         const wantSim = PERF_SIM_PARAM !== '0';
         if (wantSim) perfRunLiveSim(nodes, edges); // fire-and-forget, bounded
       }
