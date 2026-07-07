@@ -9,3 +9,5 @@ graphs/oax_full.kbin
 graphs/oax_all.kbin
 graphs/oax_sample_300k.kbin
 graphs/oax_sample_300k.kgraph.json
+graphs/arconte_meta-prod.kgraph.json
+graphs/synthetic_*.kbin
