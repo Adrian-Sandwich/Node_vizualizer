@@ -5650,6 +5650,75 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       }
     }
 
+    // Array-native twin of computeFallbackLayout — same radial algorithm, but
+    // over typed arrays (clusterIdx + edgeSrc/edgeDst) instead of node objects.
+    // Lets a kbin with no natural geometry get the SAME layout the JSON path
+    // computes in-browser, so O looks identical regardless of format.
+    function computeFallbackLayoutIdx(out, clusterIdx, edgeSrc, edgeDst, n, nDomains, radius = 1400) {
+      const fib = (count, r) => {
+        const golden = Math.PI * (3 - Math.sqrt(5));
+        const a = new Float64Array(count * 3);
+        for (let i = 0; i < count; i++) {
+          const y = 1 - (2 * i + 1) / count;
+          const rr = Math.sqrt(Math.max(0, 1 - y * y));
+          const th = golden * i;
+          a[i * 3] = Math.cos(th) * rr * r; a[i * 3 + 1] = y * r; a[i * 3 + 2] = Math.sin(th) * rr * r;
+        }
+        return a;
+      };
+      const deg = new Float64Array(n);
+      const e = edgeSrc.length;
+      for (let p = 0; p < e; p++) {
+        const a = edgeSrc[p], b = edgeDst[p];
+        if (a < 0 || b < 0) continue;
+        deg[a]++; deg[b]++;
+      }
+      let maxDeg = 1;
+      for (let i = 0; i < n; i++) if (deg[i] > maxDeg) maxDeg = deg[i];
+      const rMin = radius * 0.06, rMax = radius, logMax = Math.log1p(maxDeg);
+      const radii = new Float64Array(n);
+      for (let i = 0; i < n; i++) radii[i] = rMin + (1 - Math.log1p(deg[i]) / logMax) * (rMax - rMin);
+
+      // domain sectors (clusterIdx is already sorted-domain order == keys.sort())
+      const D = Math.max(1, nDomains);
+      const counts = new Int32Array(D);
+      for (let i = 0; i < n; i++) counts[clusterIdx[i]]++;
+      const centers = D > 1 ? fib(D, 1.0) : new Float64Array([0, 1, 0]);
+      const seen = new Int32Array(D);
+      const dirs = new Float64Array(n * 3);
+      const sub = []; // per-domain fibonacci spheres, lazily built
+      for (let d = 0; d < D; d++) sub.push(counts[d] ? fib(counts[d], 1.0) : null);
+      for (let i = 0; i < n; i++) {
+        const d = clusterIdx[i], j = seen[d]++;
+        const cx = centers[d * 3], cy = centers[d * 3 + 1], cz = centers[d * 3 + 2];
+        const s = sub[d];
+        const vx = cx + 0.45 * s[j * 3], vy = cy + 0.45 * s[j * 3 + 1], vz = cz + 0.45 * s[j * 3 + 2];
+        const nm = Math.sqrt(vx * vx + vy * vy + vz * vz) || 1;
+        dirs[i * 3] = vx / nm; dirs[i * 3 + 1] = vy / nm; dirs[i * 3 + 2] = vz / nm;
+      }
+      const acc = new Float64Array(n * 3);
+      for (let it = 0; it < 3; it++) {
+        for (let i = 0; i < n * 3; i++) acc[i] = dirs[i] * 0.5;
+        for (let p = 0; p < e; p++) {
+          const a = edgeSrc[p], b = edgeDst[p];
+          if (a < 0 || b < 0) continue;
+          const ai = a * 3, bi = b * 3;
+          acc[ai] += dirs[bi]; acc[ai + 1] += dirs[bi + 1]; acc[ai + 2] += dirs[bi + 2];
+          acc[bi] += dirs[ai]; acc[bi + 1] += dirs[ai + 1]; acc[bi + 2] += dirs[ai + 2];
+        }
+        for (let i = 0; i < n; i++) {
+          const x = acc[i * 3], y = acc[i * 3 + 1], z = acc[i * 3 + 2];
+          const nm = Math.sqrt(x * x + y * y + z * z);
+          if (nm > 1e-9) { dirs[i * 3] = x / nm; dirs[i * 3 + 1] = y / nm; dirs[i * 3 + 2] = z / nm; }
+        }
+      }
+      for (let i = 0; i < n; i++) {
+        out[i * 3] = dirs[i * 3] * radii[i];
+        out[i * 3 + 1] = dirs[i * 3 + 1] * radii[i] * 0.45; // flatten → disc
+        out[i * 3 + 2] = dirs[i * 3 + 2] * radii[i];
+      }
+    }
+
     // Frame the perf scene from its actual shape: flat/disc layouts get the
     // tilted overhead view (edge-on they collapse into a line — this is how
     // baked radial files looked "aplastados" at load), volumetric ones frontal.
@@ -7298,6 +7367,18 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           });
           perf.nodeAt = kbinNodeAt;
           perf.indexOfId = kbinFindIndex;
+          // kbin flagged layout:"fallback" carries no natural geometry — run
+          // the SAME computeFallbackLayout the JSON path uses, so O reveals the
+          // semantic structure identically regardless of format. (Baked files —
+          // parquet_to_kbin spiral — keep their coords; the JS radial would be
+          // too slow at 10M+ edges anyway.)
+          if (d.meta && d.meta.layout === 'fallback') {
+            setBootStage('LAYOUT RADIAL…', 'estructura semántica');
+            computeFallbackLayoutIdx(perf.positions, perf.clusterIdx,
+              perf.edgeSrc, perf.edgeDst, perf.count, d.meta.domains.length);
+            perf.origPositions.set(perf.positions);
+            if (perf.points) perf.pointsGeo.getAttribute('position').needsUpdate = true;
+          }
         } else {
           buildPerfScene(nodes, edges);
         }

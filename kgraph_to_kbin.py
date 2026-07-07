@@ -23,10 +23,13 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
     ap.add_argument("output")
-    ap.add_argument("--algo", choices=["radial", "spiral"], default="radial",
-                    help="layout when the JSON carries no coords (default "
-                         "radial — mirrors the app's computeFallbackLayout, "
-                         "shows hub relations the spiral flattens)")
+    ap.add_argument("--algo", choices=["fallback", "radial", "spiral"],
+                    default="fallback",
+                    help="layout when the JSON carries no coords. 'fallback' "
+                         "(default) bakes a cheap spiral placeholder and flags "
+                         "the file so the BROWSER runs computeFallbackLayout — "
+                         "the exact radial the JSON path uses (semantic hubs). "
+                         "'radial'/'spiral' bake that layout in Python instead.")
     args = ap.parse_args()
 
     import numpy as np
@@ -68,12 +71,23 @@ def main():
     type_counts = {t: int(c) for t, c in
                    zip(types.tolist(), np.bincount(typ_idx, minlength=len(types)).tolist())}
 
-    # positions: use baked x/y/z if present, else spiral layout (same as kbin)
+    # positions: use baked x/y/z if present, else per --algo
     has_xyz = all(k in nodes[0] for k in ("x", "y", "z"))
+    layout_tag = "baked"
     if has_xyz:
         print("[kg2kbin] usando coords horneadas del JSON", file=sys.stderr)
         pos = np.array([[float(nd["x"]), float(nd["y"]), float(nd["z"])]
                         for nd in nodes], dtype=np.float32)
+    elif args.algo == "fallback":
+        # spiral placeholder only — the browser recomputes radial via
+        # computeFallbackLayout (flagged layout:"fallback" in meta). Matches
+        # the JSON path exactly; the semantic hub structure the user wants.
+        print("[kg2kbin] layout diferido al navegador (computeFallbackLayout)",
+              file=sys.stderr)
+        deg = (np.bincount(e_src, minlength=n).astype(np.float64)
+               + np.bincount(e_dst, minlength=n))
+        pos = spiral_layout(np, n, deg, dom_idx.astype(np.int64), len(dom_names))
+        layout_tag = "fallback"
     elif args.algo == "radial":
         print("[kg2kbin] sin coords → layout radial (hubs al centro)", file=sys.stderr)
         from graph_layout import layout_radial, normalize
@@ -107,6 +121,7 @@ def main():
                          for i, dn in enumerate(dom_names)},
         "edgeTypes": types.tolist(),
         "edgeTypeCounts": type_counts,
+        "layout": layout_tag,  # "fallback" → browser runs computeFallbackLayout
         "source": {"from": args.input.split("/")[-1],
                    "createdAt": datetime.now().isoformat() + "Z"},
     }
