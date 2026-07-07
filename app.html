@@ -5532,7 +5532,32 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // ═══════════════════════════════════════════════════════════════════════
     let perfMode = false;
     let perfData = null; // kbin binary-mode typed data (null for JSON loads)
-    const MAX_GPU_EDGES = 5000000; // edge-buffer upload budget (short edges first)
+    // edge-buffer upload budget (short edges first). Sized dynamically from
+    // the GPU's maxBufferSize so a big box (DGX: 22M verified) uploads far
+    // more than a laptop, without the fixed 5M cap crashing either. Overridable
+    // with ?maxedges=<n>. probeGpuBudget() refines it before the scene builds.
+    let MAX_GPU_EDGES = 5000000;
+    let _gpuBudgetProbed = false;
+    const _EDGES_OVERRIDE = new URLSearchParams(location.search).get('maxedges');
+    async function probeGpuBudget() {
+      if (_gpuBudgetProbed) return;
+      _gpuBudgetProbed = true;
+      if (_EDGES_OVERRIDE) { // manual override wins, skip the probe
+        MAX_GPU_EDGES = Math.max(1, parseInt(_EDGES_OVERRIDE, 10) || 5000000);
+        log(`[gpu] MAX_GPU_EDGES = ${(MAX_GPU_EDGES / 1e6).toFixed(1)}M (?maxedges override)`);
+        return;
+      }
+      try {
+        const a = await navigator.gpu?.requestAdapter();
+        // maxBufferSize is a WebGPU limit; the line mesh is WebGL, so treat it
+        // as a proxy for the GPU's memory class, not an exact ceiling.
+        const maxBuf = a?.limits?.maxBufferSize || 268435456; // 256MB default
+        const BYTES_PER_EDGE = 24; // linePos: 2 verts * 3 f32
+        const budget = Math.floor((maxBuf * 0.5) / BYTES_PER_EDGE);
+        MAX_GPU_EDGES = Math.max(5000000, Math.min(24000000, budget));
+        log(`[gpu] maxBufferSize ${(maxBuf / 1e6) | 0}MB → MAX_GPU_EDGES ${(MAX_GPU_EDGES / 1e6).toFixed(1)}M`);
+      } catch (e) { /* no WebGPU → keep the 5M default */ }
+    }
     const PERF_POINTS_THRESHOLD = 300000; // above this, nodes render as round points (63x fewer verts than instanced spheres)
     const POINTS_OVERRIDE = new URLSearchParams(location.search).get('points'); // '1'|'0'
     let _usedFallbackLayout = false; // spiral seed applied (no baked coords)
@@ -7356,6 +7381,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       // wire custom picking (graphData is empty — built-in raycast is blind).
       if (perfMode) {
         const hadBake = perfData ? true : (hasBakedLayout(nodes) && !_usedFallbackLayout);
+        await probeGpuBudget(); // size MAX_GPU_EDGES to this GPU before upload
         if (perfData) {
           const d = perfData;
           buildPerfCore({
