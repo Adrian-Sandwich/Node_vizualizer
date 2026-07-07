@@ -7,3 +7,5 @@ __pycache__/
 .nodeviz-chrome-profile/
 graphs/oax_full.kbin
 graphs/oax_all.kbin
+graphs/oax_sample_300k.kbin
+graphs/oax_sample_300k.kgraph.json
