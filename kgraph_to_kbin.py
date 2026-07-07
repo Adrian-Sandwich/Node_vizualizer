@@ -23,6 +23,10 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input")
     ap.add_argument("output")
+    ap.add_argument("--algo", choices=["radial", "spiral"], default="radial",
+                    help="layout when the JSON carries no coords (default "
+                         "radial — mirrors the app's computeFallbackLayout, "
+                         "shows hub relations the spiral flattens)")
     args = ap.parse_args()
 
     import numpy as np
@@ -70,6 +74,13 @@ def main():
         print("[kg2kbin] usando coords horneadas del JSON", file=sys.stderr)
         pos = np.array([[float(nd["x"]), float(nd["y"]), float(nd["z"])]
                         for nd in nodes], dtype=np.float32)
+    elif args.algo == "radial":
+        print("[kg2kbin] sin coords → layout radial (hubs al centro)", file=sys.stderr)
+        from graph_layout import layout_radial, normalize
+        # layout_radial reads e["from"]/e["to"] + node["id"]/["domain"] — the
+        # kgraph edges already carry from/to, feed them straight in
+        coords = normalize(layout_radial(nodes, edges, 1400.0), 1400.0)
+        pos = np.array(coords, dtype=np.float32)
     else:
         print("[kg2kbin] sin coords → layout espiral", file=sys.stderr)
         deg = (np.bincount(e_src, minlength=n).astype(np.float64)
