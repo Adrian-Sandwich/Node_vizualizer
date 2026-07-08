@@ -1,13 +1,17 @@
 .DS_Store
 settings.local.json
-graphs/*.html
 __pycache__/
 *.pyc
 .venv/
 .nodeviz-chrome-profile/
-graphs/oax_full.kbin
-graphs/oax_all.kbin
-graphs/oax_sample_300k.kbin
-graphs/oax_sample_300k.kgraph.json
-graphs/arconte_meta-prod.kgraph.json
-graphs/synthetic_*.kbin
+
+# Graph data & source datasets are confidential — never version them.
+# Exceptions below (_test2 fixture, INDEX.md doc) are explicit un-ignores.
+graphs/*
+*.kgraph.json
+*.kbin
+*.parquet
+
+# keep: tiny synthetic test fixture (bhtest sanity) + the graphs index doc
+!graphs/_test2.kgraph.json
+!graphs/INDEX.md

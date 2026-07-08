@@ -8,19 +8,37 @@ Fully standalone — single HTML file, no build step, no npm. Runs entirely in t
 
 ```
 Node_visualizer/
-  app.html                              — the complete app
-  kg_nebula_bfs_3500_*.html             — sample external graph (3500 nodes)
-  notas-cdmx/                           — sample Obsidian notes dataset
-  README.md
-  LICENSE
+  app.html                — the complete app (single file, ~9k lines)
+  parquet_to_kbin.py      — edge parquet → binary .kbin (millions scale)
+  kgraph_to_kbin.py       — .kgraph.json → .kbin (kills the JSON parse wall)
+  parquet_to_kgraph.py    — edge parquet → sampled .kgraph.json
+  graph_layout.py         — bake a 3D layout offline (radial / drl / spiral / islands)
+  bake_casper_periodos.py — semantic per-period ring layout for Casper graphs
+  gen_synthetic_kbin.py   — synthetic .kbin generator (sim stress tests)
+  graph_anonymize.py      — strip PII (matrículas / names) across kgraph files
+  bench/                  — headless fps + bhtest harness (playwright)
+  docs/                   — format notes, physics/layout notes, DGX benchmark
+  graphs/                 — data assets (gitignored — see below)
+  vendor/                 — MediaPipe, Three.js, fonts (offline)
+  README.md · LICENSE
 ```
+
+> **Data is confidential and NOT versioned.** Everything under `graphs/`
+> plus all `*.kgraph.json`, `*.kbin`, and `*.parquet` files are gitignored —
+> they hold real student/geographic data. Copy them to a machine by hand
+> (rsync/scp), never commit. The only exceptions kept in git are
+> `graphs/_test2.kgraph.json` (a 2-node synthetic test fixture) and
+> `graphs/INDEX.md`. Before sharing any Casper graph, run
+> `graph_anonymize.py` first.
 
 ## Quick Start (local machine)
 
-1. Open `app.html` in **Google Chrome**
+1. Open `app.html` in **Google Chrome** (serve over `localhost`, not raw
+   `file://` — or use `launch.command`, which sets the offline flags for you)
 2. Two modes:
    - **Notes mode**: Paste a Gemini API key → Select a folder of `.md` files
-   - **External graph mode**: Click **LOAD EXTERNAL GRAPH** → Pick an HTML graph file (like `kg_nebula_bfs_3500_*.html`)
+   - **External graph mode**: Click **LOAD EXTERNAL GRAPH** → pick a
+     `.kgraph.json`, `.kbin` (binary, millions scale), or `.html` graph file
 
 ## Remote Setup (SSH tunnel)
 
@@ -33,43 +51,55 @@ If the app runs on a remote server (e.g. a GPU machine) and you want to use your
   vendored under `vendor/` and load locally. Graph viewing + hand tracking work fully offline.
   (Notes mode still needs internet: Gemini API for embeddings and `esm.sh` for the UMAP worker.)
 
-### Large graphs
+### Large graphs — up to millions of nodes
 
-Two paths depending on size:
+The app renders the full Oaxaca graph (**1.19M nodes / 21.3M edges**) in the
+browser. Three scales, three tools:
 
-**Full graphs (tested up to 36k nodes / 365k edges) — perf mode.** Bake a 3D
-layout offline, then load the result; the app auto-switches to instanced
-rendering (1 draw call for all nodes + 1 for all edges, no live physics):
-
-```bash
-# one-time: python3 -m venv .venv && .venv/bin/pip install python-igraph
-.venv/bin/python graph_layout.py INPUT.kgraph.json -o OUTPUT.kgraph.json
-```
-
-Perf mode activates automatically above 8k nodes / 60k edges (`?perf=1|0`
-overrides). Graphs without baked coords are arranged in-browser with the
-radial galaxy layout (instant, no Python needed); baking with `--algo drl`
-is an optional upgrade for the organic force-directed look. Smaller graphs
-that carry baked coords load instantly (positions pinned, physics skipped).
-
-**Focused subgraphs — prune.** For interactive physics on a slice:
+**1. Millions — binary `.kbin`.** JSON dies at this size (`JSON.parse` needs
+the whole file as one string; V8 caps that near 512MB, and objects blow memory
+3–5×). The `.kbin` format is typed arrays laid straight over the fetched
+ArrayBuffer — no parse, ~206 bytes/node (vs ~1775 for JSON, 8.6× smaller),
+node records materialized lazily on interaction, CSR adjacency for 20M-edge
+neighbor queries.
 
 ```bash
-python3 graph_prune.py INPUT.kgraph.json OUTPUT.kgraph.json --min-shared 3
+# one-time: python3 -m venv .venv && .venv/bin/pip install duckdb numpy python-igraph
+# full graph from an (src,dst,type) edge parquet — no sampling:
+.venv/bin/python parquet_to_kbin.py edges.parquet graphs/full.kbin --exclude-types ""
+# or convert an existing .kgraph.json (kills the JSON wall):
+.venv/bin/python kgraph_to_kbin.py graphs/big.kgraph.json graphs/big.kbin
 ```
 
-`--min-shared N` keeps course nodes shared by ≥N dropout students (lower N = bigger graph).
-Add `--include-continua` to also keep continuing students for contrast.
+Above 300k nodes the app renders nodes as GPU points (1 vertex each), uploads
+a length-sorted edge budget sized to the GPU's `maxBufferSize` (a 4GB-class
+card takes all 21.3M edges; a laptop keeps a safe slice), and fades edge
+density by zoom. Load a `.kbin` via the file picker or `?graph=graphs/x.kbin`.
 
-**URL params:** `?graph=<url>` auto-loads a graph over HTTP (direct links,
-testing); `?ob=0` skips the gesture onboarding; `?galaxy=1` opens straight
-into the galaxy view; `?debug=1` enables console logging + gesture HUD;
-`?perf=1|0` forces perf mode on/off; `?sim=1` runs the experimental live
-WebGPU relax; `?legacy=1` / `?crop=0` control the hand-tracking pipeline.
+**2. Mid-size — bake a layout offline.** For `.kgraph.json` graphs, precompute
+3D coords so they load instantly in perf mode (instanced rendering, no live
+physics):
+
+```bash
+.venv/bin/python graph_layout.py IN.kgraph.json -o OUT.kgraph.json --algo radial
+```
+
+`--algo`: `radial` (hubs at core, domains in sectors — reveals semantic
+structure; mirrors the in-browser `computeFallbackLayout`), `drl`/`fr`
+(igraph force-directed, organic), `spiral`, `sphere`. Disconnected graphs are
+laid out per-component and placed on a ring automatically. Perf mode activates
+above 8k nodes / 60k edges (`?perf=1|0` overrides).
+
+**3. Physics on open.** Any graph settles into an organic sphere via a WebGPU
+grid Barnes-Hut charge (O(N), a 64³→128³ FMM-lite pyramid) that scales to 1M+
+nodes. `?sim=0` opts out (opens straight into the baked/fallback layout).
+Caveat: graphs with mega-hubs (e.g. Oaxaca's ~110 municipios, each with 100k+
+edges) don't form a clean ball — the monopole approximation diverges on
+degree-1000+ hubs; the radial layout (`O` key) reads better there.
 
 **Anonymization:** `graph_anonymize.py` replaces student matrículas and
 professor names with sequential aliases across a set of kgraph files (shared
-mapping). The casper graphs shipped in `graphs/` are anonymized.
+mapping). Always run it before sharing any Casper graph.
 
 ### Step 1: Start the server on the remote machine
 
@@ -130,13 +160,28 @@ older Pose→crop pipeline; `?crop=0` disables the local-contrast enhancement.
 
 | Key | Action |
 |---|---|
-| **G** | Galaxy view: applies the space theme and cycles spiral ↔ original arrangement |
+| **G** | Galaxy view: space theme + cycles spiral ↔ sphere (settled physics, cached) |
+| **O** | Jump to the file's baked / fallback (radial) layout — the semantic view |
 | **B** | Background toggle: white (file's own palette) ↔ deep space |
 | **E** | Edge density 100% → 60% → 30% (short edges kept first — cluster view) |
+| **+ / −** | Node size — density lever that works at any zoom |
 | **H** | Recenter camera |
 | **ESC** | Close the detail panel / deselect |
 
+Perf mode also shows **DENSIDAD** and **GRAVEDAD** sliders (bottom center):
+node size over the auto-density fit, and the relax centering strength (which
+re-settles the sphere live on release).
+
 The camera preview (bottom-left) shows the video feed with hand skeleton overlay so you can verify your hands are in frame.
+
+**URL params:** `?graph=<url>` auto-loads a graph (`.kgraph.json`, `.html`, or
+`.kbin`) over HTTP; `?ob=0` skips the gesture onboarding; `?galaxy=1` opens the
+galaxy view; `?sim=0` skips the physics-on-open; `?bh=1|0` forces the grid
+Barnes-Hut charge on/off; `?maxedges=<n>` overrides the GPU edge budget;
+`?bhtest=1` runs the numeric A/B of grid vs exact charge (not with `sim=0`);
+`?perf=1|0` forces perf mode; `?points=1|0` forces points vs instanced meshes;
+`?debug=1` enables console logging + gesture HUD; `?legacy=1` / `?crop=0`
+control the hand-tracking pipeline.
 
 ## Features
 
@@ -156,11 +201,14 @@ The camera preview (bottom-left) shows the video feed with hand skeleton overlay
 
 ### Performance Optimizations
 
-- No CSS2D labels for external graphs (only colored spheres) — handles 3500+ nodes smoothly
-- Shared geometry for node meshes
-- Label visibility culling for medium graphs (500+ nodes)
-- Throttled cluster label updates
-- Bloom pass disabled when strength = 0
+- **Binary `.kbin` loader** — typed-array views over the raw ArrayBuffer, no
+  JSON.parse; lazy node records; CSR adjacency. Renders 1.19M nodes / 21.3M edges.
+- **Points mode** above 300k nodes — 1 vertex/node (63× fewer verts than
+  instanced spheres), single draw call, position updates are one buffer flush.
+- **GPU edge budget** sized to the adapter's `maxBufferSize`, edges length-sorted
+  so the cut drops the longest hairball edges first; density fades by zoom.
+- **WebGPU grid Barnes-Hut** charge (O(N)) for the live relax at millions scale.
+- Shared geometry, label culling, throttled cluster labels, bloom off at 0.
 
 ### Other
 
