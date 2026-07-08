@@ -4945,7 +4945,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     const BH_LEVELS = 6; // dims 128,64,32,16,8,4
     const BH_L_OFF = [0, 2097152, 2359296, 2392064, 2396160, 2396672];
     const BH_TOTAL_CELLS = 2396736;
-    const BH_FP_SCALE = 2048.0;
+    const BH_FP_SCALE = 1024.0;
 
     const WGSL_BH_COMMON = `
 const L_OFF = array<u32, 6>(0u, 2097152u, 2359296u, 2392064u, 2396160u, 2396672u);
@@ -5156,9 +5156,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           posData[i * 4 + 2] = this.positions[i * 3 + 2];
         }
 
-        if (this.nodeCount >= 2000000) {
-          // BIN fixed-point budget: 2M × 0.5 × 2048 ≈ 2.0e9 → i32 limit
-          throw new Error('GPUForceSimulation: máximo 2M nodos (presupuesto fixed-point del grid)');
+        if (this.nodeCount >= 4000000) {
+          // BIN fixed-point budget: worst case all nodes pile into one cell,
+          // each adding rel∈[-0.5,0.5] × BH_FP_SCALE. With FP_SCALE 1024:
+          // 4M × 0.5 × 1024 ≈ 2.0e9 < 2³¹. (Was 2M at FP 2048 — halving the
+          // scale doubled the headroom; DGX verified 3M runs, bhtest identical.)
+          throw new Error('GPUForceSimulation: máximo 4M nodos (presupuesto fixed-point del grid)');
         }
         this.useGridCharge = opts && ('forceGrid' in opts)
           ? !!opts.forceGrid
