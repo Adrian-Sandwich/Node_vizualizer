@@ -4736,14 +4736,30 @@ PAIR 1: A→B: <verb phrase> | B→A: <verb phrase>
                      'auto-densidad × ajuste manual (+/-)');
         setTimeout(hideBootStatus, 1200);
       } else if (key === 'o' && Graph && perfMode && perf) {
-        // O: back to the file's baked layout (semantic bakes survive the
-        // sphere-on-open default)
-        if (gpuSim) { _simAborted = true; gpuSim.dispose(); gpuSim = null; }
-        if (perf.lines) perf.lines.visible = true;
-        galaxyArrange('original');
-        _currentView = 'original';
-        setBootStage('ARRANGE // BAKE DEL ARCHIVO', 'layout horneado original');
+        // O toggles the file's baked layout <-> the physics sphere. The
+        // settled sphere is cached, so flipping back is instant; only the
+        // first trip (no cache) re-runs the relax.
+        if (_currentView === 'original') {
+          _currentView = 'sphere';
+          if (perf.spherePositions) {
+            galaxyArrange('sphere');
+            setBootStage('ARRANGE // ESFÉRICO', 'física asentada');
+          } else {
+            if (_galaxyAnimRAF) { cancelAnimationFrame(_galaxyAnimRAF); _galaxyAnimRAF = null; }
+            if (gpuSim) { _simAborted = true; gpuSim.dispose(); gpuSim = null; }
+            perfRunLiveSim(perf.nodes || [], perf.edges || []);
+            setBootStage('ARRANGE // ESFÉRICO', 'física GPU (Barnes-Hut)');
+          }
+        } else {
+          if (gpuSim) { _simAborted = true; gpuSim.dispose(); gpuSim = null; }
+          if (perf.lines) perf.lines.visible = true;
+          galaxyArrange('original');
+          _currentView = 'original';
+          setBootStage('ARRANGE // BAKE DEL ARCHIVO', 'O alterna: bake ↔ física');
+        }
         setTimeout(hideBootStatus, 1800);
+        const _ob = document.getElementById('galaxy-btn');
+        if (_ob) _ob.textContent = `✦ ${ARRANGE_LABEL[_currentView]}`;
       } else if (key === 'b' && Graph) {
         // B: fondo blanco ↔ espacial (light keeps the file's own palette)
         toggleFondo();
