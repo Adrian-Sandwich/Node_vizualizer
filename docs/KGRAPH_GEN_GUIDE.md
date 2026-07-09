@@ -1,5 +1,10 @@
 # Guía: generar un grafo compatible (`.kgraph.json`)
 
+> **El contrato completo y NORMATIVO vive en [`GRAPH_CONTRACT.md`](GRAPH_CONTRACT.md)**
+> (campos, límites, invariantes de kbin, llaves prohibidas en `props`).
+> Gate de aceptación: `python3 validate_graph.py <archivo>` debe salir 0.
+> Esta guía es el tutorial rápido; ante conflicto, gana el contrato.
+
 Para que otro agente/Claude produzca un archivo que el visualizador cargue sin
 tocar código. Formato de texto `.kgraph.json` (para millones de nodos ver el
 final: convertir a `.kbin`).

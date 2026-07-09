@@ -52,8 +52,11 @@ order = np.argsort(lengths, kind="stable")
 src, dst = src[order], dst[order]
 etype = np.zeros(len(src), dtype=np.uint8)
 
-# IDs compactos "s0".."sN-1"
-ids = [f"s{i}".encode() for i in range(N)]
+# IDs zero-padded "s0000000".."s2999999": el ancho fijo hace que el orden
+# lexicográfico == numérico — kbinFindIndex busca por bisección y exige ids
+# ordenados ascendente ("s10" < "s2" rompía la búsqueda en silencio)
+width = len(str(N - 1))
+ids = [f"s{i:0{width}d}".encode() for i in range(N)]
 offsets = np.zeros(N + 1, dtype=np.uint32)
 offsets[1:] = np.cumsum([len(b) for b in ids]).astype(np.uint32)
 blob = b"".join(ids)
@@ -63,6 +66,7 @@ meta = json.dumps({
     "domainColors": {d_: c for d_, c in zip(DOMAINS, ["#66d9ff", "#7b8cff", "#b07bff", "#ff7bd5"])},
     "edgeTypes": ["SYNTH"],
     "edgeTypeCounts": {"SYNTH": int(len(src))},
+    "layout": "baked",  # esfera uniforme generada arriba — coords reales
     "source": {"generator": "gen_synthetic_kbin.py", "purpose": "step4 >2M nodes"},
 }).encode()
 

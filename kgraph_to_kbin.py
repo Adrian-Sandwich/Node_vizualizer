@@ -37,6 +37,11 @@ def main():
     d = json.load(open(args.input, encoding="utf-8"))
     nodes = d["nodes"]
     edges = d.get("edges", d.get("links", []))
+    # kbinFindIndex (app.html) busca nodos por BISECCIÓN: los ids deben ir
+    # ordenados ascendente en el archivo. parquet_to_kbin ordena vía
+    # np.unique; aquí el orden venía del JSON — ids desordenados dejaban el
+    # panel de detalle/búsqueda rotos en silencio.
+    nodes = sorted(nodes, key=lambda nd: nd["id"])
     n = len(nodes)
     node_ids = [nd["id"] for nd in nodes]
     idmap = {nid: i for i, nid in enumerate(node_ids)}
