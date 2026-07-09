@@ -370,7 +370,8 @@ def main():
         "seed": args.seed,
         "computed_at": datetime.now().isoformat() + "Z",
     }
-    out = {**g, "meta": meta, "nodes": nodes}
+    from kgraph_contract import finalize
+    out = finalize({**g, "meta": meta, "nodes": nodes})
 
     out_path = args.output or args.input
     with open(out_path, "w", encoding="utf-8") as f:

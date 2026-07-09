@@ -19,6 +19,7 @@ from collections import Counter
 from datetime import datetime
 
 from graph_layout import layout_igraph, normalize
+from kgraph_contract import finalize
 
 R = 1400.0
 
@@ -97,7 +98,8 @@ def main():
     meta["layout"] = {"algorithm": "drl-periodos-anillo", "radius": R,
                       "seed": args.seed,
                       "computed_at": datetime.now().isoformat() + "Z"}
-    json.dump({**d, "meta": meta, "nodes": nodes}, open(dst, "w"), ensure_ascii=False)
+    out = finalize({**d, "meta": meta, "nodes": nodes})
+    json.dump(out, open(dst, "w"), ensure_ascii=False)
     print(f"wrote {dst}", file=sys.stderr)
 
 

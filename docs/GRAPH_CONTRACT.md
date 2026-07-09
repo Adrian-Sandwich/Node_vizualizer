@@ -145,7 +145,7 @@ en el panel; aplánalos (`"escuela.nombre": "X"`).
 | `tag_counts` | `{tag: int}` | opcional | Conteos por tag. |
 | `created_at` | string ISO-8601 | recomendado | Timestamp de generación. |
 | `title`, `note`, `source` | string | opcional | Contexto humano. `note` es EL lugar para avisos de modelado (ej. "los periodos son islas — el modelo no conecta semestres"). |
-| `layout` | string | opcional | Qué algoritmo horneó las coords (`radial`, `drl`, …). Solo si hay coords. |
+| `layout` | string u objeto | opcional | Qué algoritmo horneó las coords. String (`"radial"`, `"drl"`) u objeto `{"algorithm", "radius", "seed", "computed_at"}` como lo escriben `graph_layout.py`/`bake_casper_periodos.py`. Solo si hay coords. |
 | `anonymized` | bool | recomendado si aplica | Ver §3. |
 
 ### 1.8 Ejemplo mínimo válido

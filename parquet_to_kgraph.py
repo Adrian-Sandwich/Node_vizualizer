@@ -19,6 +19,8 @@ import json
 import sys
 from datetime import datetime
 
+from kgraph_contract import finalize
+
 # pairwise-proximity spam that buries the semantic structure at scale
 DEFAULT_EXCLUDE = "NEARBY,ON_BLOCK_FRONT,ON_ROAD"
 
@@ -98,10 +100,13 @@ def main():
              for s, d, t in con.execute("SELECT src, dst, type FROM final_edges").fetchall()]
 
     ids = sorted({e["from"] for e in edges} | {e["to"] for e in edges})
-    doms = sorted({i.split("::", 1)[0] for i in ids})
+    # ids sin prefijo "Tipo::" no truenan: dominio "default", label = id
+    pre = lambda i: i.split("::", 1)[0] if "::" in i else "default"
+    post = lambda i: i.split("::", 1)[1] if "::" in i else i
+    doms = sorted({pre(i) for i in ids})
     dom_color = {d: PALETTE[i % len(PALETTE)] for i, d in enumerate(doms)}
-    nodes = [{"id": i, "label": i.split("::", 1)[1][:18],
-              "tag": i.split("::", 1)[0], "domain": i.split("::", 1)[0],
+    nodes = [{"id": i, "label": post(i)[:18],
+              "tag": pre(i), "domain": pre(i),
               "vid": i, "size": 7, "tooltip": i, "props": {}} for i in ids]
 
     from collections import Counter
@@ -121,9 +126,10 @@ def main():
         },
         "nodes": nodes, "edges": edges,
     }
+    out = finalize(out)  # contrato: ids/props/colgadas/orden/counts
     with open(args.output, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False)
-    print(f"[parquet2kg] {len(nodes):,} nodos / {len(edges):,} aristas → {args.output}", file=sys.stderr)
+    print(f"[parquet2kg] {len(out['nodes']):,} nodos / {len(out['edges']):,} aristas → {args.output}", file=sys.stderr)
 
 
 if __name__ == "__main__":

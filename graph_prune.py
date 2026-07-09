@@ -24,6 +24,8 @@ import pathlib
 from collections import defaultdict
 from datetime import datetime
 
+from kgraph_contract import finalize
+
 
 def load(path):
     with open(path, encoding="utf-8") as f:
@@ -105,7 +107,7 @@ def main():
         "include_continua": args.include_continua,
     }
 
-    out = {**g, "meta": meta, "nodes": nodes, "edges": edges}
+    out = finalize({**g, "meta": meta, "nodes": nodes, "edges": edges})
     with open(args.output, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False)
 

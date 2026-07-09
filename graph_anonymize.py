@@ -21,6 +21,8 @@ import json
 import re
 import sys
 
+from kgraph_contract import finalize
+
 
 def load(path):
     with open(path, encoding="utf-8") as f:
@@ -82,6 +84,7 @@ def main():
         meta = g.get("meta", {})
         meta["anonymized"] = True
         g["meta"] = meta
+        g = finalize(g)  # re-ordena por los ids nuevos + contrato
         with open(p, "w", encoding="utf-8") as f:
             json.dump(g, f, ensure_ascii=False)
         print(f"[anon] wrote {p}", file=sys.stderr)

@@ -17,6 +17,8 @@ import pathlib
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
 
+from kgraph_contract import finalize
+
 
 class KGraphBuilder:
     """Assembles the final .kgraph.json output object."""
@@ -34,7 +36,10 @@ class KGraphBuilder:
         def get_meta(key_upper: str, key_lower: str):
             return source.get(key_upper) or source.get(key_lower) or {}
 
-        return {
+        # finalize() enforces docs/GRAPH_CONTRACT.md: string ids, no reserved
+        # props keys, dangling/dup edges dropped, domain colors backfilled,
+        # nodes sorted by id (kbin bisection), counts recomputed.
+        return finalize({
             "format":  "kgraph",
             "version": "1.0",
             "meta": {
@@ -51,7 +56,7 @@ class KGraphBuilder:
             },
             "nodes": self.nodes,
             "edges": self.edges,
-        }
+        })
 
 
 # ============================================================================
