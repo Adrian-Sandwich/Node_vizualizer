@@ -2010,6 +2010,10 @@
     function parseKGraphFormat(obj) {
       // Normalize .kgraph.json format to the intermediate shape expected by mapExternalToInternal
       const nodesArr = (obj.nodes || []).map(n => ({
+        // props spread FIRST: structural fields below must win — a props key
+        // named "id"/"size"/etc. used to silently overwrite the node's own
+        // (props.id clobbering id turned every incident edge dangling)
+        ...n.props,
         id:        n.id,
         label:     n.label || n.id,
         _tag:      n.tag     || 'Unknown',
@@ -2019,7 +2023,6 @@
         size:      n.size    || 10,
         // baked layout coords from graph_layout.py (may be undefined)
         _x: n.x, _y: n.y, _z: n.z,
-        ...n.props,
       }));
 
       const edgesArr = (obj.edges || []).map(e => ({
@@ -5135,18 +5138,25 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         const arraysMode = !!(nodes && nodes.arraysMode);
         this.nodes = arraysMode ? null : nodes;
         this.nodeCount = arraysMode ? nodes.count : nodes.length;
-        this.edgeCount = arraysMode ? nodes.edgeSrc.length : edges.length;
         this.scale = scale;
         this.positions = new Float32Array(this.nodeCount * 3);
         this._disposed = false;
 
-        // Initialize positions + edge indices (object mode or typed arrays)
-        const edgeIndices = new Uint32Array(Math.max(this.edgeCount * 2, 2));
+        // Initialize positions + edge indices (object mode or typed arrays).
+        // Dangling edges (-1 sentinel / unknown node id) are DROPPED here:
+        // clamping them used to turn every bad edge into a phantom spring
+        // yanking node 0 out of its cluster.
+        const rawEdgeCount = arraysMode ? nodes.edgeSrc.length : edges.length;
+        const edgeIndices = new Uint32Array(Math.max(rawEdgeCount * 2, 2));
+        let ec = 0;
         if (arraysMode) {
           this.positions.set(nodes.positions.subarray(0, this.nodeCount * 3));
-          for (let i = 0; i < this.edgeCount; i++) {
-            edgeIndices[i * 2] = Math.max(0, nodes.edgeSrc[i]);
-            edgeIndices[i * 2 + 1] = Math.max(0, nodes.edgeDst[i]);
+          for (let i = 0; i < rawEdgeCount; i++) {
+            const s = nodes.edgeSrc[i], t = nodes.edgeDst[i];
+            if (s < 0 || t < 0) continue;
+            edgeIndices[ec * 2] = s;
+            edgeIndices[ec * 2 + 1] = t;
+            ec++;
           }
         } else {
           nodes.forEach((n, i) => {
@@ -5156,13 +5166,18 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           });
           const nodeIdToIdx = new Map();
           nodes.forEach((n, i) => nodeIdToIdx.set(n.id, i));
-          edges.forEach((e, i) => {
+          edges.forEach(e => {
             const src = typeof e.source === 'object' ? e.source.id : e.source;
             const tgt = typeof e.target === 'object' ? e.target.id : e.target;
-            edgeIndices[i * 2] = nodeIdToIdx.get(src) || 0;
-            edgeIndices[i * 2 + 1] = nodeIdToIdx.get(tgt) || 0;
+            const si = nodeIdToIdx.get(src), ti = nodeIdToIdx.get(tgt);
+            if (si === undefined || ti === undefined) return;
+            edgeIndices[ec * 2] = si;
+            edgeIndices[ec * 2 + 1] = ti;
+            ec++;
           });
         }
+        this.edgeCount = ec;
+        if (ec < rawEdgeCount) log(`[perfSim] dropped ${rawEdgeCount - ec} dangling edges`);
 
         // Create GPU buffers (vec4f = 16 bytes per element)
         const posData = new Float32Array(this.nodeCount * 4);
@@ -5188,7 +5203,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         this.posBuffer = this._createStorageBuffer(posData, true);
         this.velBuffer = this._createStorageBuffer(new Float32Array(this.nodeCount * 4), true); // COPY_SRC: readVelocities (verification)
         this.targetBuffer = this._createStorageBuffer(new Float32Array(this.nodeCount * 4), false, true);
-        this.edgeBuffer = this._createStorageBufferU32(edgeIndices);
+        // upload only the compacted prefix (shader bound-checks edgeCount)
+        this.edgeBuffer = this._createStorageBufferU32(
+          edgeIndices.subarray(0, Math.max(this.edgeCount * 2, 2)));
 
         // Atomic force accumulator for link scatter/gather (i32 x 3 per node)
         this.forceAccumBuffer = device.createBuffer({
@@ -5491,16 +5508,21 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         await this.readBuffer.mapAsync(GPUMapMode.READ);
         const data = new Float32Array(this.readBuffer.getMappedRange());
         let mn = Infinity, mx = -Infinity; // bbox fused into the copy (free)
+        let sum = 0; // one NaN/Inf coord poisons the sum — full-coverage
+                     // divergence check (min/max misses PARTIAL NaN: NaN
+                     // comparisons are false, so mn/mx stay finite)
         for (let i = 0; i < this.nodeCount; i++) {
           const x = data[i * 4], y = data[i * 4 + 1], z = data[i * 4 + 2];
           this.positions[i * 3] = x;
           this.positions[i * 3 + 1] = y;
           this.positions[i * 3 + 2] = z;
+          sum += x + y + z;
           const lo = Math.min(x, Math.min(y, z));
           const hi = Math.max(x, Math.max(y, z));
           if (lo < mn) mn = lo;
           if (hi > mx) mx = hi;
         }
+        this.nonFinite = !Number.isFinite(sum);
         if (this.useGridCharge && Number.isFinite(mn) && Number.isFinite(mx)) {
           // refit the grid cube with hysteresis: only when the layout escapes
           // it or shrinks well below it (per-tick jitter would perturb forces)
@@ -6607,7 +6629,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       if (_galaxyAnimRAF) { cancelAnimationFrame(_galaxyAnimRAF); _galaxyAnimRAF = null; }
       // take control from a live physics settle — both write perf.positions.
       // _simAborted stops the sim's pending end-block from re-framing the
-      // camera / rewriting node coords on its next rAF.
+      // camera / rewriting node coords on its next rAF. The token bump also
+      // cancels a perfRunLiveSim still awaiting its GPU device.
+      _simGen++;
       if (gpuSim) { _simAborted = true; gpuSim.dispose(); gpuSim = null; }
       if (perf && perf.lines) perf.lines.visible = true;
       const ease = t => 1 - Math.pow(1 - t, 3);
@@ -6684,7 +6708,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           if (t < 1) { _galaxyAnimRAF = requestAnimationFrame(step); }
           else {
             _galaxyAnimRAF = null;
-            perf._edgeLenCap = 0; // cull only applies to the sphere view
+            // sphere keeps the settle's pathological-edge cull (same capLen
+            // as perfRunLiveSim: TARGET_R * 1.5); other views show all edges
+            perf._edgeLenCap = (mode === 'sphere' && perf.spherePositions)
+              ? SCALE * 9 : 0;
             perfAutoNodeSize(); perfApplyHighlight();
             // JSON mode keeps the rich records' coords in sync (kbin records
             // are materialized fresh from perf.positions — nothing to sync)
@@ -6793,6 +6820,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     }
 
     let _simAborted = false;
+    // Generation token: perfRunLiveSim awaits the GPU device before it owns
+    // gpuSim — a user action (O/G/reload) landing inside that window used to
+    // let the stale sim start anyway, fighting the new arrangement and
+    // leaking the overwritten sim's GPU buffers. Every takeover bumps the
+    // token; a run whose captured token went stale steps aside.
+    let _simGen = 0;
     let SIM_GRAVITY = 0.001; // slider: centering strength of the relax
     // harness/debug hook: closure state is unreachable from the console
     window.NVZ_DEBUG = {
@@ -6871,13 +6904,16 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     // then disposes. Uses the module-level gpuSim var so initGraph teardown
     // kills it on reload.
     async function perfRunLiveSim(nodes, edges, opts = {}) {
+      const gen = ++_simGen; // this run owns the sim until someone bumps the token
       if (!('gpu' in navigator)) { setBootStage('WEBGPU NOT AVAILABLE', 'live sim skipped'); return; }
       let device;
       try {
         const adapter = await navigator.gpu.requestAdapter();
         device = await adapter.requestDevice();
       } catch (e) { console.warn('[perfSim] no WebGPU device:', e); return; }
-      if (!perf) return; // graph got torn down while we awaited
+      // graph torn down, or the user took control (O/G/arrange), while we
+      // awaited the device — starting now would fight their arrangement
+      if (!perf || gen !== _simGen) return;
       _simAborted = false;
       _currentView = 'sphere';
       // sphere-on-open: settle from a compact random seed. Starting from a
@@ -6923,7 +6959,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       const chargeK = -35 * Math.min(1, Math.max(0.06, 80000 / perf.count));
       gpuSim.params.positionStrength = SIM_GRAVITY;
       gpuSim.setChargeStrength(chargeK);
-      gpuSim.setLinkStrength(0.006, 200); // also flushes positionStrength via _writeParams
+      // divergence retry (NaN watchdog) re-runs at reduced dt
+      if (opts._dtScale) gpuSim.params.dt *= opts._dtScale;
+      gpuSim.setLinkStrength(0.006, 200); // also flushes positionStrength + dt via _writeParams
       const m4 = new THREE.Matrix4();
       // points-only physics view: mid-settle stretched edges white out the
       // whole screen, so the line object hides until the layout settles
@@ -6938,6 +6976,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       let ticks = 0;
       setBootStage('LIVE GPU SIM…', 'relaxing layout');
       const loop = () => {
+        // stale run: a newer sim owns the gpuSim global — not ours to touch
+        if (gen !== _simGen) return;
         if (!gpuSim || gpuSim._disposed || !perf || ticks >= MAX_TICKS) {
           if (gpuSim) { gpuSim.dispose(); gpuSim = null; }
           if (perf && perf.lines) perf.lines.visible = true;
@@ -7021,10 +7061,34 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         }
         const strobe = perf.count > 200000 ? 3 : 1; // readback+visuals every Nth tick
         gpuSim.tick(strobe > 1 && (ticks + 1) % strobe !== 0).then(() => {
-          if (!gpuSim || !perf) return;
+          if (!gpuSim || !perf || gen !== _simGen) return;
           ticks++;
           if (strobe > 1 && ticks % strobe !== 0) {
             requestAnimationFrame(loop);
+            return;
+          }
+          if (gpuSim.nonFinite) {
+            // physics diverged (NaN/Inf positions). Never reaches the screen:
+            // caught before the perf.positions copy. Retry once from a fresh
+            // seed at half dt; if that also blows up, restore the file's bake.
+            console.warn(`[perfSim] non-finite positions at tick ${ticks} — ` +
+                         ((opts._retries || 0) < 1 ? 'retrying at half dt' : 'restoring bake'));
+            gpuSim.dispose(); gpuSim = null;
+            if (perf.lines) perf.lines.visible = true;
+            if ((opts._retries || 0) < 1) {
+              setBootStage('SIM INESTABLE // REINTENTO', 'dt reducido · re-seed');
+              perfRunLiveSim(nodes, edges, { ...opts, reseed: true,
+                _retries: (opts._retries || 0) + 1,
+                _dtScale: (opts._dtScale || 1) * 0.5 });
+            } else {
+              perf.positions.set(perf.origPositions);
+              _currentView = 'original';
+              galaxyArrange('original', 300); // start == target: clean redraw + framing
+              setBootStage('SIM INESTABLE // BAKE DEL ARCHIVO', 'la física divergió (NaN)');
+              setTimeout(hideBootStatus, 2500);
+              const _b = document.getElementById('galaxy-btn');
+              if (_b) _b.textContent = `✦ ${ARRANGE_LABEL.original}`;
+            }
             return;
           }
           perf.positions.set(gpuSim.positions.subarray(0, perf.positions.length));
@@ -7070,6 +7134,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
           requestAnimationFrame(loop);
         }).catch(e => {
           console.warn('[perfSim] tick error:', e);
+          if (gen !== _simGen) return; // stale run — the live sim isn't ours
           if (gpuSim) { gpuSim.dispose(); gpuSim = null; }
           if (perf && perf.lines) perf.lines.visible = true;
         });
@@ -7089,6 +7154,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       // Without this, every reload stacks another renderLabels rAF loop, a new
       // CSS2D overlay in the DOM, a new window.resize listener, and orphans the
       // old ForceGraph3D (WebGL context) — the progressive slowdown on reload.
+      _simGen++; // cancel any perfRunLiveSim still awaiting its GPU device
       if (gpuSim) { gpuSim.dispose(); gpuSim = null; }
       if (_labelRAF) { cancelAnimationFrame(_labelRAF); _labelRAF = null; }
       if (clusterLabelRAF) { cancelAnimationFrame(clusterLabelRAF); clusterLabelRAF = null; }
@@ -7871,8 +7937,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         }
       });
       gsl?.addEventListener('change', () => {
-        // settled: re-relax from the current shape with the new gravity
-        if (!gpuSim && perfMode && perf) perfRunLiveSim(perf.nodes || [], perf.edges || [], { reseed: false });
+        // settled: re-relax from the current shape with the new gravity.
+        // SPHERE view only — relaxing a bake/spiral in place would destroy
+        // the arrangement AND cache the result as a fake spherePositions.
+        if (!gpuSim && perfMode && perf && _currentView === 'sphere') {
+          perfRunLiveSim(perf.nodes || [], perf.edges || [], { reseed: false });
+        }
       });
     }
     document.getElementById('bg-toggle').addEventListener('click', () => toggleFondo());
